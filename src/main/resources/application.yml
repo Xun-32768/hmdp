@@ -1,7 +1,39 @@
 server:
   port: 30002
 
-mybatis:
-  mapper-locations: classpath:mappers/*xml
-  type-aliases-package: com.hmdp.mybatis.entity
+mybatis-plus:
+  mapper-locations: classpath:mapper/*xml
+  type-aliases-package: com.hmdp.pojo.entity
 
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://127.0.0.1:3306/hmdp?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC&characterEncoding=utf8
+    username: root
+    password: '060216'
+  jackson:
+    default-property-inclusion: non_null # JSON处理时忽略非空字段
+  data:
+    redis:
+      password: 123456
+      host: 127.0.0.1
+      port: 6379
+      # 连接超时时间
+      timeout: 5000ms
+      # 以下是连接池配置
+      lettuce:
+        pool:
+          # 连接池最大连接数（使用负值表示没有限制）
+          max-active: 8
+          # 连接池中的最大空闲连接
+          max-idle: 8
+          # 连接池中的最小空闲连接
+          min-idle: 1
+          # 连接池最大阻塞等待时间（负值表示无限等待）
+          max-wait: -1ms
+          # 核心配置：每 10 秒检查一次空闲连接
+          time-between-eviction-runs: 10s
+
+logging:
+  level:
+    com.hmdp: debug
