@@ -1,10 +1,9 @@
-package com.hmdp.service.Impl;
+package com.hmdp.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.bean.copier.CopyOptions;
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.RandomUtil;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.mapper.UserMapper;
 import com.hmdp.pojo.dto.LoginFormDTO;
@@ -17,12 +16,10 @@ import com.hmdp.utils.RegexUtils;
 import com.hmdp.utils.SystemConstants;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.TimeoutUtils;
 import org.springframework.stereotype.Service;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Random;
 import java.util.concurrent.TimeUnit;
 
 import static com.hmdp.utils.RedisConstants.*;
@@ -45,10 +42,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         stringRedisTemplate.opsForValue().set(RedisConstants.LOGIN_CODE_KEY +phone,code,
                 RedisConstants.LOGIN_CODE_TTL, TimeUnit.MINUTES);
         log.info("验证码：{}", code);
-        return Result.success();
+        return Result.ok();
     }
 
-    public Result<String> login(LoginFormDTO loginFormDTO){
+    public Result login(LoginFormDTO loginFormDTO){
 //      1.获取手机号和验证码
         String phone = loginFormDTO.getPhone();
         String code= loginFormDTO.getCode();
@@ -77,7 +74,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         String tokenKey=LOGIN_USER_KEY+token;
         stringRedisTemplate.opsForHash().putAll(tokenKey,userMap);
         stringRedisTemplate.expire(tokenKey,LOGIN_USER_TTL,TimeUnit.MINUTES);
-        return Result.success(token);
+        return Result.ok(token);
 
     }
 

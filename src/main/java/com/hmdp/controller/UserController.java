@@ -7,6 +7,9 @@ import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
+/**
+ * 用户控制类
+ */
 
 @RestController
 @Slf4j
@@ -32,7 +35,7 @@ public class UserController {
      * @return token
      */
     @PostMapping("/login")
-    public Result<String> login(@RequestBody LoginFormDTO loginFormDTO){
+    public Result login(@RequestBody LoginFormDTO loginFormDTO){
         return userService.login(loginFormDTO);
     }
 

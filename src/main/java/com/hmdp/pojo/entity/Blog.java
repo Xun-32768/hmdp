@@ -4,23 +4,22 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.experimental.Accessors;
-
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.experimental.Accessors;
 
 /**
  * <p>
  * 
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
+ * @author axun
+ * @since 2026-01-12
  */
-@Data
-@EqualsAndHashCode(callSuper = false)
+@Getter
+@Setter
 @Accessors(chain = true)
 @TableName("tb_blog")
 public class Blog implements Serializable {
@@ -32,10 +31,12 @@ public class Blog implements Serializable {
      */
     @TableId(value = "id", type = IdType.AUTO)
     private Long id;
+
     /**
      * 商户id
      */
     private Long shopId;
+
     /**
      * 用户id
      */

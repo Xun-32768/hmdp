@@ -3,24 +3,24 @@ package com.hmdp.pojo.entity;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.experimental.Accessors;
-
 import java.io.Serializable;
 import java.time.LocalDateTime;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.experimental.Accessors;
 
 /**
  * <p>
  * 
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
+ * @author axun
+ * @since 2026-01-12
  */
-@Data
-@EqualsAndHashCode(callSuper = false)
+@Getter
+@Setter
 @Accessors(chain = true)
 @TableName("tb_shop_type")
 public class ShopType implements Serializable {
@@ -59,6 +59,4 @@ public class ShopType implements Serializable {
      */
     @JsonIgnore
     private LocalDateTime updateTime;
-
-
 }

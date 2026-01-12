@@ -1,26 +1,24 @@
 package com.hmdp.pojo.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.experimental.Accessors;
-
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.experimental.Accessors;
 
 /**
  * <p>
  * 
  * </p>
  *
- * @author 虎哥
- * @since 2021-12-22
+ * @author axun
+ * @since 2026-01-11
  */
-@Data
-@EqualsAndHashCode(callSuper = false)
+@Getter
+@Setter
 @Accessors(chain = true)
 @TableName("tb_voucher")
 public class Voucher implements Serializable {
@@ -54,52 +52,32 @@ public class Voucher implements Serializable {
     private String rules;
 
     /**
-     * 支付金额
+     * 支付金额，单位是分。例如200代表2元
      */
     private Long payValue;
 
     /**
-     * 抵扣金额
+     * 抵扣金额，单位是分。例如200代表2元
      */
     private Long actualValue;
 
     /**
-     * 优惠券类型
+     * 0,普通券；1,秒杀券
      */
-    private Integer type;
+    private Byte type;
 
     /**
-     * 优惠券类型
+     * 1,上架; 2,下架; 3,过期
      */
-    private Integer status;
-    /**
-     * 库存
-     */
-    @TableField(exist = false)
-    private Integer stock;
-
-    /**
-     * 生效时间
-     */
-    @TableField(exist = false)
-    private LocalDateTime beginTime;
-
-    /**
-     * 失效时间
-     */
-    @TableField(exist = false)
-    private LocalDateTime endTime;
+    private Byte status;
 
     /**
      * 创建时间
      */
     private LocalDateTime createTime;
 
-
     /**
      * 更新时间
      */
     private LocalDateTime updateTime;
-
-
 }
