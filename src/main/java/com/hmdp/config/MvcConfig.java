@@ -17,19 +17,20 @@ public class MvcConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        //        order(0)是执行顺序
+        registry.addInterceptor(new RefreshTokenInterceptor(stringRedisTemplate))
+                .addPathPatterns("/**")
+                .order(0);
 
         registry.addInterceptor(new LoginInterceptor())
                 .excludePathPatterns(
-                "/shop/**",
-                "/voucher/**",
-                "/shop-type/**",
-                "/upload/**",
-                "/blog/hot",
-                "/user/code",
-                "/user/login"
-        ).order(1);
-
-        //        order(0)是执行顺序
-        registry.addInterceptor(new RefreshTokenInterceptor(stringRedisTemplate)).addPathPatterns("/**").order(0);
+                        "/shop/**",
+                        "/voucher/**",
+                        "/shop-type/**",
+                        "/upload/**",
+                        "/blog/hot",
+                        "/user/code",
+                        "/user/login"
+                ).order(1);
     }
 }
