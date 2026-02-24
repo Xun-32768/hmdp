@@ -13,6 +13,10 @@ spring:
     password: '060216'
   jackson:
     default-property-inclusion: non_null # JSON处理时忽略非空字段
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 10MB
   data:
     redis:
       password: 123456

@@ -4,10 +4,7 @@ import com.hmdp.pojo.dto.Result;
 import com.hmdp.pojo.entity.Blog;
 import com.hmdp.service.IBlogService;
 import jakarta.annotation.Resource;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
@@ -23,13 +20,25 @@ public class BlogController {
     @Resource
     private IBlogService blogService;
 
-    /**
-     * 获取热门博客
-     * @param current
-     * @return
-     */
+//  获取热门博客
     @GetMapping("/hot")
     private Result queryHotBlog(@RequestParam(value="current",defaultValue = "1") Integer current) {
         return blogService.queryHotBlog(current);
     }
+
+//   保存博客
+    @PostMapping
+    private Result saveBlog(@RequestBody Blog blog) {
+       return blogService.saveBlog(blog);
+    }
+
+//   查询探店笔记
+    @GetMapping("/{id}")
+    private Result queryBlogById(@PathVariable Integer id) {
+        return blogService.queryBlogById(id);
+    }
+
+
+
+
 }

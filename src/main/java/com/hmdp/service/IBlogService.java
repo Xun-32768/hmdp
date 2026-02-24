@@ -17,4 +17,8 @@ import java.util.List;
 public interface IBlogService extends IService<Blog> {
 
     Result queryHotBlog(Integer current);
+
+    Result saveBlog(Blog blog);
+
+    Result queryBlogById(Integer id);
 }
