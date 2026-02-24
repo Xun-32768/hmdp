@@ -23,7 +23,7 @@ public class MyCodeGenerator {
                             .pathInfo(Collections.singletonMap(OutputFile.xml, System.getProperty("user.dir") + "/src/main/resources/mapper"));
                 })
                 .strategyConfig(builder -> {
-                    builder.addInclude("tb_voucher_order") // 这里填入你想要生成的【表名】
+                    builder.addInclude("tb_user_info") // 这里填入你想要生成的【表名】
                             .addTablePrefix("tb_") // 如果表名带 tb_ 前缀，生成类名时会自动去掉
                             .entityBuilder()
                             .enableLombok() // 使用Lombok

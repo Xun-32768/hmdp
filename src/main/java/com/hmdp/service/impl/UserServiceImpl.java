@@ -4,6 +4,7 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.bean.copier.CopyOptions;
 import cn.hutool.core.lang.UUID;
 import cn.hutool.core.util.RandomUtil;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.mapper.UserMapper;
 import com.hmdp.pojo.dto.LoginFormDTO;
@@ -14,6 +15,7 @@ import com.hmdp.service.IUserService;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RegexUtils;
 import com.hmdp.utils.SystemConstants;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -77,6 +79,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         return Result.ok(token);
 
     }
+   public Result logout(HttpServletRequest request){
+        String token=request.getParameter("authorization");
+        if(StrUtil.isBlank(token)){
+            return Result.ok();
+        }
+        String key=RedisConstants.LOGIN_USER_KEY+token;
+        stringRedisTemplate.delete(key);
+        return Result.ok();
+   }
+
 
     private User createUserWithPhone(String phone) {
         User user=new User();
