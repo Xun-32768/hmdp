@@ -4,10 +4,7 @@ import com.hmdp.pojo.dto.Result;
 import com.hmdp.pojo.entity.Voucher;
 import com.hmdp.service.IVoucherService;
 import jakarta.annotation.Resource;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 /**
  * 优惠券控制类
@@ -42,4 +39,14 @@ public class VoucherController {
         voucherService.addSeckillVoucher(voucher);
         return Result.ok(voucher.getId());
     }
+    /**
+     * 查询店铺的优惠券列表
+     * @param shopId 店铺id
+     * @return 优惠券列表
+     */
+    @GetMapping("/list/{shopId}")
+    public Result queryVoucherOfShop(@PathVariable("shopId") Long shopId) {
+        return voucherService.queryVoucherOfShop(shopId);
+    }
+
 }

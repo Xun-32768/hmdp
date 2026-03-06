@@ -1,7 +1,6 @@
 package com.hmdp.service;
 
-import com.hmdp.pojo.dto.Result;
-import com.hmdp.pojo.entity.Shop;
+import com.hmdp.pojo.entity.UserInfo;
 import com.baomidou.mybatisplus.extension.service.IService;
 
 /**
@@ -12,7 +11,6 @@ import com.baomidou.mybatisplus.extension.service.IService;
  * @author axun
  * @since 2026-02-24
  */
-public interface IShopService extends IService<Shop> {
+public interface IUserInfoService extends IService<UserInfo> {
 
-    Result queryById(Long id);
 }

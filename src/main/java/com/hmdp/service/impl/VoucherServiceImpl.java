@@ -1,5 +1,6 @@
 package com.hmdp.service.impl;
 
+import com.hmdp.pojo.dto.Result;
 import com.hmdp.pojo.entity.SeckillVoucher;
 import com.hmdp.pojo.entity.Voucher;
 import com.hmdp.mapper.VoucherMapper;
@@ -10,6 +11,8 @@ import io.lettuce.core.AbstractRedisAsyncCommands;
 import jakarta.annotation.Resource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 import static com.hmdp.utils.RedisConstants.SECKILL_STOCK_KEY;
 
@@ -43,6 +46,13 @@ public class VoucherServiceImpl extends ServiceImpl<VoucherMapper, Voucher> impl
 
 
         stringRedisTemplate.opsForValue().set(SECKILL_STOCK_KEY+voucher.getId(),voucher.getStock().toString());
+    }
+
+    public Result queryVoucherOfShop(Long shopId){
+        // 查询优惠券信息
+        List<Voucher> vouchers = getBaseMapper().queryVoucherOfShop(shopId);
+        // 返回结果
+        return Result.ok(vouchers);
     }
 
 }

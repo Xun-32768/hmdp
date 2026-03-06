@@ -96,6 +96,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         this.save(user);
         return user;
     }
+   public  Result queryUserById(Long useId){
+        User user=getById(useId);
+        if(user==null){
+            return Result.ok();
+        }
+        UserDTO userDTO=BeanUtil.copyProperties(user,UserDTO.class);
+        return Result.ok(userDTO);
+   }
 
 
 }

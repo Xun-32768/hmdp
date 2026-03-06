@@ -84,4 +84,11 @@ public class UserController {
         info.setUpdateTime(null);
         return Result.ok(info);
     }
+
+    //根据id查询用户
+    @GetMapping("/{id}")
+    public Result queryUserById(@PathVariable("id") Long useId) {
+        return userService.queryUserById(useId);
+
+    }
 }
