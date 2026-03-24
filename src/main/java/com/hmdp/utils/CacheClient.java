@@ -15,15 +15,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 import static com.hmdp.utils.RedisConstants.CACHE_NULL_TTL;
+import static com.hmdp.utils.RedisConstants.LOCK_SHOP_KEY;
 
 //封装Redis工具类
 @Slf4j
 @Component
 public class CacheClient {
 
-    private final StringRedisTemplate stringRedisTemplate;
-
     private static final ExecutorService CACHE_REBUILD_EXECUTOR = Executors.newFixedThreadPool(10);
+    private final StringRedisTemplate stringRedisTemplate;
 
     public CacheClient(StringRedisTemplate stringRedisTemplate) {
         this.stringRedisTemplate = stringRedisTemplate;
@@ -39,12 +39,12 @@ public class CacheClient {
         RedisData redisData = new RedisData();
         redisData.setData(value);
         redisData.setExpireTime(LocalDateTime.now().plusSeconds(timeUnit.toSeconds(time)));
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(redisData));
     }
 
-//    解决缓存穿透
-
-    public <R,ID> R queryWithPassThrough(
-            String keyPrefix, ID id, Class<R> type, Function<ID, R> dbFallback, Long time, TimeUnit unit){
+    //    解决缓存穿透(缓存空值)
+    public <R, ID> R queryWithPassThrough(
+            String keyPrefix, ID id, Class<R> type, Function<ID, R> dbFallback, Long time, TimeUnit unit) {
         String key = keyPrefix + id;
         // 1.从redis查询商铺缓存
         String json = stringRedisTemplate.opsForValue().get(key);
@@ -54,11 +54,10 @@ public class CacheClient {
             return JSONUtil.toBean(json, type);
         }
         // 判断命中的是否是空值
-        if (json != null) {
+        if (json.isEmpty()) {
             // 返回一个错误信息
             return null;
         }
-
         // 4.不存在，根据id查询数据库
         R r = dbFallback.apply(id);
         // 5.不存在，返回错误
@@ -73,7 +72,7 @@ public class CacheClient {
         return r;
     }
 
-//  互斥锁方法解决缓存击穿
+    //  互斥锁方法解决缓存击穿
 
     //    加锁
     private boolean tryLock(String key) {
@@ -86,17 +85,18 @@ public class CacheClient {
         stringRedisTemplate.delete(key);
     }
 
+    //    互斥锁
     public <R, ID> R queryWithMutex(
             String keyPrefix, ID id, Class<R> type, Function<ID, R> dbFallback, Long time, TimeUnit unit) {
 
         String key = keyPrefix + id;
         String json = stringRedisTemplate.opsForValue().get(key);
-        //判断key是否存在
+        //判断缓存是否存在
         if (StrUtil.isNotBlank(json)) {
             return JSONUtil.toBean(json, type);
         }
-//        判断是否为空
-        if (json != null) {
+//        判断是否为空值
+        if (json.isEmpty()) {
             return null;
         }
         String lockKey = keyPrefix + id;
@@ -122,36 +122,42 @@ public class CacheClient {
         return r;
     }
 
-//    逻辑过期解决缓存击穿问题
-public <R,ID> R queryWithLogicExpire(
-        String keyPrefix, ID id, Class<R> type, Function<ID, R> dbFallback, Long time, TimeUnit unit){
-    String key=keyPrefix+id;
-    String json=stringRedisTemplate.opsForValue().get(key);
-    if(StrUtil.isNotBlank(json)){
-        return null;
-    }
-    RedisData redisData=JSONUtil.toBean(json,RedisData.class);
-    R r=JSONUtil.toBean((JSONObject) redisData.getData(),type);
-    LocalDateTime expireTime =redisData.getExpireTime();
-    if(expireTime.isAfter(LocalDateTime.now())){
+    //    逻辑过期解决缓存击穿问题
+    public <R, ID> R queryWithLogicExpire(
+            String keyPrefix, ID id, Class<R> type, Function<ID, R> dbFallback, Long time, TimeUnit unit) {
+        String key = keyPrefix + id;
+        String json = stringRedisTemplate.opsForValue().get(key);
+        //  判断是否命中
+        if (StrUtil.isBlank(json)) {
+            return null;
+        }
+        // 命中，需要先把json反序列化为对象
+        RedisData redisData = JSONUtil.toBean(json, RedisData.class);
+        R r = JSONUtil.toBean((JSONObject) redisData.getData(), type);
+        LocalDateTime expireTime = redisData.getExpireTime();
+        //判断是否过期
+        if (expireTime.isAfter(LocalDateTime.now())) {
+//            未过期
+            return r;
+        }
+
+        String lockKey = LOCK_SHOP_KEY + id;
+        boolean isLock = tryLock(lockKey);
+//        是否获取锁成功
+        if (isLock) {
+            CACHE_REBUILD_EXECUTOR.submit(() -> {
+                try {
+                    R newR = dbFallback.apply(id);
+                    this.setWithLogicalExpire(key, newR, time, unit);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                } finally {
+                    unlock(lockKey);
+                }
+
+            });
+        }
         return r;
     }
-
-    String lockKey=keyPrefix+id;
-    boolean isLock =tryLock(lockKey);
-    if(isLock) {
-        CACHE_REBUILD_EXECUTOR.submit(() -> {
-            try {
-                this.setWithLogicalExpire(key, r, time, unit);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            } finally {
-                unlock(lockKey);
-            }
-
-        });
-    }
-    return r;
-}
 
 }

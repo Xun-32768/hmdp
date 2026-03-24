@@ -86,6 +86,11 @@
             <artifactId>velocity-engine-core</artifactId>
             <version>2.3</version>
         </dependency>
+<!--        RabbitMQ-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
 
     </dependencies>
     <dependencyManagement>
@@ -118,7 +123,6 @@
                 <version>${spring-boot.version}</version>
                 <configuration>
                     <mainClass>com.hmdp.HmdpApplication</mainClass>
-                    <skip>true</skip>
                 </configuration>
                 <executions>
                     <execution>

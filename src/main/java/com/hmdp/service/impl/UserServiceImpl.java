@@ -17,9 +17,12 @@ import com.hmdp.utils.RegexUtils;
 import com.hmdp.utils.SystemConstants;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -36,10 +39,41 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         this.stringRedisTemplate = stringRedisTemplate;
     }
 
+
+    private static final DefaultRedisScript<Long> SLIDING_WINDOW_SCRIPT;
+    static {
+        SLIDING_WINDOW_SCRIPT = new DefaultRedisScript<>();
+        SLIDING_WINDOW_SCRIPT.setLocation(new ClassPathResource("sms.lua"));
+        SLIDING_WINDOW_SCRIPT.setResultType(Long.class);
+    }
     public Result sendCode(String phone){
         if(RegexUtils.isPhoneInvalid(phone)){
             return Result.fail("手机号格式不正确");
         }
+// 核心参数设定：60秒内最多只能发 1 次短信
+        long windowSizeInSec = 60L;
+        int limitCount = 1;
+
+        long now = System.currentTimeMillis();
+        long windowStart = now - (windowSizeInSec * 1000);
+        // 必须使用 UUID 拼接，保证并发下每个请求的 Member 绝对唯一
+        String member = now + "-" + UUID.randomUUID().toString();
+        String key="sms:limit:"+phone;
+        // 执行 Lua 脚本
+        Long result = stringRedisTemplate.execute(
+                SLIDING_WINDOW_SCRIPT,
+                Collections.singletonList(key),
+                String.valueOf(now),
+                String.valueOf(windowStart),
+                String.valueOf(limitCount),
+                member,
+                String.valueOf(windowSizeInSec)
+        );
+        // 结果校验
+        if (result == null || result == 0L) {
+            return Result.fail("获取验证码过于频繁，请60秒后再试");
+        }
+
         String code= RandomUtil.randomNumbers(6);
         stringRedisTemplate.opsForValue().set(RedisConstants.LOGIN_CODE_KEY +phone,code,
                 RedisConstants.LOGIN_CODE_TTL, TimeUnit.MINUTES);
