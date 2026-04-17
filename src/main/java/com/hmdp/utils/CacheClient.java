@@ -54,7 +54,7 @@ public class CacheClient {
             return JSONUtil.toBean(json, type);
         }
         // 判断命中的是否是空值
-        if (json.isEmpty()) {
+        if ("".equals(json)) {
             // 返回一个错误信息
             return null;
         }

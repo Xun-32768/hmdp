@@ -6,7 +6,6 @@ import com.hmdp.pojo.dto.Result;
 import com.hmdp.pojo.dto.UserDTO;
 import com.hmdp.pojo.entity.Follow;
 import com.hmdp.mapper.FollowMapper;
-import com.hmdp.pojo.entity.User;
 import com.hmdp.service.IFollowService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.service.IUserService;

@@ -19,7 +19,6 @@ import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.redisson.client.RedisTimeoutException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
@@ -32,7 +31,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 
-import static com.hmdp.utils.RedisConstants.BLOG_LIKED_KEY;
 
 /**
  * <p>
@@ -62,7 +60,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         User user=userService.getById(userId);
         blog.setName(user.getNickName()).setIcon(user.getIcon());
     }
-//  查询是否呗点过赞
+//  查询是否被点过赞
     private void isBlogLiked(Blog blog){
         UserDTO user = UserHolder.getUser();
         if(user == null){

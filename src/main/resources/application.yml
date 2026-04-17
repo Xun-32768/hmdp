@@ -20,7 +20,7 @@ spring:
       max-request-size: 10MB
   rabbitmq:
     host: 127.0.0.1
-    port: 5672
+    port: 5673
     username: root
     password: 123456
     virtual-host: /
