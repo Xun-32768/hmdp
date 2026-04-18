@@ -203,6 +203,7 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             throw e;
         }
     }
+//TODO RabbitMQ实现手动ACK和死信队列，以及数据库消费失败的Redis回滚机制
 /* //Redis Stream 消息队列的实现
     @EventListener(ApplicationReadyEvent.class)
     public void init() {

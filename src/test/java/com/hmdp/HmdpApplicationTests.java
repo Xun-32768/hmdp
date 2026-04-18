@@ -4,10 +4,15 @@ import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.bean.copier.CopyOptions;
 import cn.hutool.core.lang.UUID;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.hmdp.mapper.UserInfoMapper;
 import com.hmdp.pojo.dto.UserDTO;
+import com.hmdp.pojo.entity.Follow;
 import com.hmdp.pojo.entity.Shop;
 import com.hmdp.pojo.entity.User;
+import com.hmdp.pojo.entity.UserInfo;
+import com.hmdp.service.IFollowService;
 import com.hmdp.service.IShopService;
+import com.hmdp.service.IUserInfoService;
 import com.hmdp.service.IUserService;
 import com.hmdp.service.impl.ShopServiceImpl;
 import com.hmdp.utils.RedisConstants;
@@ -23,10 +28,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -118,5 +120,30 @@ class HmdpApplicationTests {
         }
         writer.close();
         System.out.println("成功为 " + userList.size() + " 个用户生成 Token 并存入 D:\\hmdp_tokens.txt");
+    }
+    @Resource
+    private UserInfoMapper userInfoMapper;
+
+    @Resource
+    private IFollowService followService;
+    @Test
+    void testFamous(){
+        System.out.println(famous(1L));
+
+    }
+    List<Long> famous(Long userId){
+// 1. 查询当前用户关注的所有人
+        List<Follow> follows = followService.query().eq("user_id", userId).list();
+        if (follows == null || follows.isEmpty()) {
+            return Collections.emptyList();
+        }
+        List<Long> followIds = follows.stream().map(Follow::getFollowUserId).toList();
+
+        // 2. 判定哪些是“大V”（示例：粉丝数 > 5000 的用户）
+
+        return followIds.stream().filter(followId ->{
+                UserInfo info = userInfoMapper.getByUserId(followId);
+                 return info != null && info.getFans() > 5000;}).toList();
+
     }
 }

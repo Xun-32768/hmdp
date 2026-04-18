@@ -3,6 +3,7 @@ package com.hmdp.service.impl;
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.hmdp.mapper.UserInfoMapper;
 import com.hmdp.pojo.dto.Result;
 import com.hmdp.pojo.dto.ScrollResult;
 import com.hmdp.pojo.dto.UserDTO;
@@ -13,6 +14,7 @@ import com.hmdp.pojo.entity.User;
 import com.hmdp.service.IBlogService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.service.IFollowService;
+import com.hmdp.service.IUserInfoService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.RedisIdWorker;
 import com.hmdp.utils.SystemConstants;
@@ -24,6 +26,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import static com.hmdp.utils.RedisConstants.*;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -50,9 +53,10 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     private IFollowService followService;
     @Resource
     private StringRedisTemplate stringRedisTemplate;
+    @Resource
+    private UserInfoMapper userInfoMapper;
+//    大v发件箱
 
-    @Autowired
-    private RedisIdWorker redisIdWorker;
 
 //    查询与blog有关的用户
     private void queryBlogUser(Blog blog) {
@@ -90,14 +94,29 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             if(blog.getContent()==null ||  blog.getShopId() == null || blog.getTitle() == null ){
                 return Result.fail("笔记不完整，发布失败");
             }
-            save(blog);
-            // 推送到粉丝的“收件箱”（Feed流）
+//            保存博客到数据库
+            boolean isSuccess=save(blog);
+            if(!isSuccess) return Result.fail("发布失败");
+
+            Long blogId=blog.getId();
+            long timeStamp=System.currentTimeMillis();
+//            博主存放到自己发件箱
+            stringRedisTemplate.opsForZSet().add(BLOG_OUTBOX_KEY+user.getId(),blogId.toString(),timeStamp);
+//            获取粉丝列表
             List<Follow> follows=followService.query().eq("follow_user_id",user.getId()).list();
-            for(Follow follow:follows){
-                Long userId=follow.getUserId();
-                String key="feed:"+userId;
-                stringRedisTemplate.opsForZSet().add(key,blog.getId().toString(),System.currentTimeMillis());
+//            boolean isFamous=follows.size()>5000;
+            boolean isFamous=userInfoMapper.getByUserId(user.getId()).getFans()>5000;
+//            小博主直接推送到粉丝的收件箱
+            if(!isFamous){
+                for(Follow follow:follows){
+                    Long userId=follow.getUserId();
+                    String key=FEED_KEY+userId;
+                    stringRedisTemplate.opsForZSet().add(key,blog.getId().toString(),timeStamp);
+//                移除超出收件箱容量的部分
+                    stringRedisTemplate.opsForZSet().removeRange(key,0,-(FEED_MAX_LEN+1));
+                }
             }
+
         }catch (Exception e){
             log.error("博客保存失败",e);
             return Result.fail("博客保存失败");
@@ -188,17 +207,47 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         Long userId = UserHolder.getUser().getId();
         // 2.查询收件箱 ZREVRANGEBYSCORE key Max Min LIMIT offset count
         String key = "feed:" + userId;
-        Set<ZSetOperations.TypedTuple<String>> typedTuples = stringRedisTemplate.opsForZSet()
-                .reverseRangeByScoreWithScores(key, 0, max, offset, 2);
-        // 3.非空判断
-        if (typedTuples == null || typedTuples.isEmpty()) {
+        long pageSize=3;
+        Set<ZSetOperations.TypedTuple<String>> pushTuples = stringRedisTemplate.opsForZSet()
+                .reverseRangeByScoreWithScores(key, 0, max, offset, pageSize);
+
+        //获取所有关注的大V的Id
+        List<Long> famousIds=followService.queryFamousFollows(userId);
+        List<ZSetOperations.TypedTuple<String>> allTuples = new ArrayList<>();
+        if (pushTuples != null) {
+            allTuples.addAll(pushTuples);
+        }
+        // 遍历大V，手动拉取（Pull）
+        for (Long famousId : famousIds) {
+            // 从大V的发件箱拉取在本次分页时间范围内的动态
+            Set<ZSetOperations.TypedTuple<String>> pullTuples = stringRedisTemplate.opsForZSet()
+                    .reverseRangeByScoreWithScores(BLOG_OUTBOX_KEY + famousId, 0, max, offset, pageSize);
+            if (pullTuples != null) {
+                allTuples.addAll(pullTuples);
+            }
+        }
+        // 非空判断
+        if (allTuples == null || allTuples.isEmpty()) {
             return Result.ok();
         }
+        // 3. 聚合逻辑：去重、按时间戳倒序排列
+        // 同一个博客可能既在大V发件箱也在活跃粉收件箱，需去重
+        List<ZSetOperations.TypedTuple<String>> sortedTuples = allTuples.stream()
+                .collect(Collectors.toMap(
+                        ZSetOperations.TypedTuple::getValue, // 以博客ID为Key去重
+                        t -> t,
+                        (existing, replacement) -> existing // 保留前者
+                ))
+                .values().stream()
+                .sorted((a, b) -> b.getScore().compareTo(a.getScore())) // 按Score（时间戳）倒序
+                .limit(pageSize) // 取当前分页的大小
+                .toList();
+
         // 4.解析数据：blogId、minTime（时间戳）、offset
-        List<Long> ids = new ArrayList<>(typedTuples.size());
+        List<Long> ids = new ArrayList<>();
         long minTime = 0; // 2
         int os = 1; // 2
-        for (ZSetOperations.TypedTuple<String> tuple : typedTuples) { // 5 4 4 2 2
+        for (ZSetOperations.TypedTuple<String> tuple : sortedTuples) { // 5 4 4 2 2
             // 4.1.获取id
             ids.add(Long.valueOf(tuple.getValue()));
             // 4.2.获取分数(时间戳）
@@ -211,6 +260,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             }
         }
         os = (minTime == max ? os : os + offset);
+
         // 5.根据id查询blog
         String idStr = StrUtil.join(",", ids);
         if (ids.isEmpty()) {

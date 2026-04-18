@@ -11,8 +11,7 @@ import org.springframework.web.servlet.HandlerInterceptor;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
-import static com.hmdp.utils.RedisConstants.LOGIN_USER_KEY;
-import static com.hmdp.utils.RedisConstants.LOGIN_USER_TTL;
+import static com.hmdp.utils.RedisConstants.*;
 
 public class RefreshTokenInterceptor implements HandlerInterceptor {
     private final StringRedisTemplate stringRedisTemplate;
@@ -40,6 +39,8 @@ public class RefreshTokenInterceptor implements HandlerInterceptor {
         UserHolder.saveUser(userDTO);
         // 7.刷新token有效期
         stringRedisTemplate.expire(key, LOGIN_USER_TTL, TimeUnit.MINUTES);
+        Long userId=UserHolder.getUser().getId();
+        stringRedisTemplate.expire(FEED_KEY+userId.toString(), 7, TimeUnit.DAYS);
         // 8.放行
         return true;
 
