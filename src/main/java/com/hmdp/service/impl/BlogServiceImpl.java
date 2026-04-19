@@ -28,10 +28,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import static com.hmdp.utils.RedisConstants.*;
 
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 
@@ -88,8 +91,8 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Transactional(rollbackFor = Exception.class)
     public Result saveBlog(Blog blog){
-        UserDTO user= UserHolder.getUser();
-        blog.setUserId(user.getId());
+        Long userId= UserHolder.getUser().getId();
+        blog.setUserId(userId);
         try {
             if(blog.getContent()==null ||  blog.getShopId() == null || blog.getTitle() == null ){
                 return Result.fail("笔记不完整，发布失败");
@@ -101,19 +104,23 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
             Long blogId=blog.getId();
             long timeStamp=System.currentTimeMillis();
 //            博主存放到自己发件箱
-            stringRedisTemplate.opsForZSet().add(BLOG_OUTBOX_KEY+user.getId(),blogId.toString(),timeStamp);
+            stringRedisTemplate.opsForZSet().add(BLOG_OUTBOX_KEY+userId,blogId.toString(),timeStamp);
 //            获取粉丝列表
-            List<Follow> follows=followService.query().eq("follow_user_id",user.getId()).list();
+//            List<Follow> follows=followService.query().eq("follow_user_id",user.getId()).list();
+            List<String> follows=stringRedisTemplate.opsForSet().members(FOLLOW_KEY+userId).stream().toList();
 //            boolean isFamous=follows.size()>5000;
-            boolean isFamous=userInfoMapper.getByUserId(user.getId()).getFans()>5000;
+            boolean isFamous=userInfoMapper.getByUserId(userId).getFans()>5000;
 //            小博主直接推送到粉丝的收件箱
             if(!isFamous){
-                for(Follow follow:follows){
-                    Long userId=follow.getUserId();
-                    String key=FEED_KEY+userId;
-                    stringRedisTemplate.opsForZSet().add(key,blog.getId().toString(),timeStamp);
-//                移除超出收件箱容量的部分
-                    stringRedisTemplate.opsForZSet().removeRange(key,0,-(FEED_MAX_LEN+1));
+                for(String id:follows){
+                    String key=FEED_KEY+id;
+//                    Redis中存在key时才推送，即只推送活跃用户
+                    if(stringRedisTemplate.hasKey(key)){
+                        stringRedisTemplate.opsForZSet().add(key,blog.getId().toString(),timeStamp);
+//                         移除超出收件箱容量的部分
+                        stringRedisTemplate.opsForZSet().removeRange(key,0,-(FEED_MAX_LEN+1));
+                    }
+
                 }
             }
 
@@ -283,4 +290,37 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
         return Result.ok(r);
     }
+
+    public void rebuildFeed(Long userId){
+        // 1. 获取当前用户关注的所有博主 ID
+        List<Follow> follows = followService.query().eq("user_id", userId).list();
+        if (follows == null || follows.isEmpty()) return;
+
+        List<Long> followUserIds = follows.stream()
+                .map(Follow::getFollowUserId)
+                .collect(Collectors.toList());
+
+        // 2. 从数据库查询这些博主最近 7 天发布的笔记 ID (限制条数，如 100 条)
+        // SQL 示例: SELECT id, update_time FROM tb_blog WHERE user_id IN (...)
+        // AND update_time > (now - 7days) ORDER BY update_time DESC LIMIT 100
+        List<Blog> recentBlogs = query().in("user_id", followUserIds)
+                .gt("create_time", LocalDateTime.now().minusDays(7))
+                .orderByDesc("create_time")
+                .last("LIMIT 100")
+                .list();
+
+        if (recentBlogs == null || recentBlogs.isEmpty()) return;
+
+        // 3. 将这些博客 ID 重新写入 Redis ZSet
+        String key = FEED_KEY + userId;
+        for (Blog blog : recentBlogs) {
+            long timestamp = blog.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+            stringRedisTemplate.opsForZSet().add(key, blog.getId().toString(), timestamp);
+        }
+
+        // 4. 设置过期时间（再次激活 7 天有效期）
+        stringRedisTemplate.expire(key, 7, TimeUnit.DAYS);
+    }
+
+
 }

@@ -11,12 +11,15 @@ import com.hmdp.pojo.dto.LoginFormDTO;
 import com.hmdp.pojo.dto.Result;
 import com.hmdp.pojo.dto.UserDTO;
 import com.hmdp.pojo.entity.User;
+import com.hmdp.service.IBlogService;
 import com.hmdp.service.IUserService;
 import com.hmdp.utils.RedisConstants;
 import com.hmdp.utils.RegexUtils;
 import com.hmdp.utils.SystemConstants;
+import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -25,6 +28,7 @@ import org.springframework.stereotype.Service;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 import static com.hmdp.utils.RedisConstants.*;
@@ -33,6 +37,11 @@ import static com.hmdp.utils.RedisConstants.*;
 @Slf4j
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IUserService {
 
+    @Resource
+    @Lazy
+    private IBlogService blogService;
+
+    @Resource
     private final StringRedisTemplate stringRedisTemplate;
 
     public UserServiceImpl(StringRedisTemplate stringRedisTemplate) {
@@ -110,8 +119,21 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         String tokenKey=LOGIN_USER_KEY+token;
         stringRedisTemplate.opsForHash().putAll(tokenKey,userMap);
         stringRedisTemplate.expire(tokenKey,LOGIN_USER_TTL,TimeUnit.MINUTES);
+
+        checkAndRebuildFeed(user.getId());
         return Result.ok(token);
 
+    }
+    private void checkAndRebuildFeed(Long userId) {
+        String key = FEED_KEY + userId;
+        // 1. 判断收件箱是否存在
+        Boolean hasKey = stringRedisTemplate.hasKey(key);
+        if (Boolean.FALSE.equals(hasKey)) {
+            // 2. 不存在则开启异步任务重建（避免阻塞登录）
+            CompletableFuture.runAsync(() -> {
+                blogService.rebuildFeed(userId);
+            });
+        }
     }
    public Result logout(HttpServletRequest request){
         String token=request.getParameter("authorization");

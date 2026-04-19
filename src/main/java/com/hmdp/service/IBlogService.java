@@ -31,4 +31,6 @@ public interface IBlogService extends IService<Blog> {
     Result queryBlogByUserId(Integer current, Long id);
 
     Result queryBlogOfFollow(Long max, Integer offset);
+
+    void rebuildFeed(Long userId);
 }
