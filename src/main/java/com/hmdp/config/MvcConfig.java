@@ -6,6 +6,7 @@ import jakarta.annotation.Resource;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 
@@ -30,7 +31,16 @@ public class MvcConfig implements WebMvcConfigurer {
                         "/upload/**",
                         "/blog/hot",
                         "/user/code",
-                        "/user/login"
+                        "/user/login",
+                        "/user/password-login",
+                        "/user/password/reset",
+                        "/imgs/**"
                 ).order(1);
+    }
+
+    @Override
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        registry.addResourceHandler("/imgs/**")
+                .addResourceLocations("file:D:/nginx/nginx-1.18.0/html/hmdp/imgs/");
     }
 }

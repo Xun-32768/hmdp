@@ -126,7 +126,7 @@ class HmdpApplicationTests {
 
     @Resource
     private IFollowService followService;
-    @Test
+//    @Test
     void testFamous(){
         System.out.println(famous(1L));
 

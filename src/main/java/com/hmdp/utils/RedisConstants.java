@@ -23,4 +23,8 @@ public class RedisConstants {
     public static final String FOLLOW_KEY = "follows:";
     public static final int FEED_MAX_LEN = 500; // 每个用户收件箱只保存最近500条
 
+    // 密码登录防暴力破解
+    public static final String LOGIN_PASSWORD_ERR_KEY = "login:password:err:";
+    public static final Long LOGIN_PASSWORD_ERR_TTL = 5L; // 锁定时间（分钟）
+    public static final int LOGIN_PASSWORD_MAX_RETRY = 5; // 最大连续输错次数
 }

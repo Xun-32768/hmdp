@@ -1,5 +1,6 @@
 package com.hmdp.pojo.entity;
 
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.io.Serializable;
@@ -65,6 +66,12 @@ public class UserInfo implements Serializable {
      * 积分
      */
     private Integer credits;
+
+    /**
+     * 获赞总数（统计扩展字段，非表中持久化列）
+     */
+    @TableField(exist = false)
+    private Integer liked;
 
     /**
      * 会员级别，0~9级,0代表未开通会员

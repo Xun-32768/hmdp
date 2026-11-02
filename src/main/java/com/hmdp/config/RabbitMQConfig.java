@@ -1,11 +1,9 @@
 package com.hmdp.config;
 
-import org.springframework.amqp.core.Binding;
-import org.springframework.amqp.core.BindingBuilder;
-import org.springframework.amqp.core.DirectExchange;
-import org.springframework.amqp.core.Queue;
+import org.springframework.amqp.core.*;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
 import org.springframework.amqp.support.converter.MessageConverter;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -30,7 +28,7 @@ public class RabbitMQConfig {
     }
 
     @Bean
-    public Binding seckillBinding(Queue seckillQueue, DirectExchange seckillExchange) {
+    public Binding seckillBinding(@Qualifier("seckillQueue") Queue seckillQueue, DirectExchange seckillExchange) {
         return BindingBuilder.bind(seckillQueue).to(seckillExchange).with(SECKILL_ROUTING_KEY);
     }
 
@@ -38,5 +36,19 @@ public class RabbitMQConfig {
     @Bean
     public MessageConverter messageConverter(){
         return new Jackson2JsonMessageConverter();
+    }
+
+    @Bean
+    public TopicExchange feedExchange() {
+        return new TopicExchange("feed.topic");
+    }
+    @Bean
+    public Queue feedRebuildQueue() {
+        // 建议加上 TTL 或长度限制，防止极端情况下内存撑爆
+        return new Queue("feed.rebuild.queue");
+    }
+    @Bean
+    public Binding feedBinding() {
+        return BindingBuilder.bind(feedRebuildQueue()).to(feedExchange()).with("feed.rebuild.#");
     }
 }

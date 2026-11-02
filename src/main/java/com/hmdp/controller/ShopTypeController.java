@@ -1,7 +1,6 @@
 package com.hmdp.controller;
 
 import com.hmdp.pojo.dto.Result;
-import com.hmdp.pojo.entity.ShopType;
 import com.hmdp.service.IShopTypeService;
 import jakarta.annotation.Resource;
 import org.springframework.web.bind.annotation.GetMapping;

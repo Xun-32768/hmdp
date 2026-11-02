@@ -21,19 +21,19 @@ public class BlogController {
 
     //  获取热门博客
     @GetMapping("/hot")
-    private Result queryHotBlog(@RequestParam(value = "current", defaultValue = "1") Integer current) {
+    public Result queryHotBlog(@RequestParam(value = "current", defaultValue = "1") Integer current) {
         return blogService.queryHotBlog(current);
     }
 
     //   保存博客
     @PostMapping
-    private Result saveBlog(@RequestBody Blog blog) {
+    public Result saveBlog(@RequestBody Blog blog) {
         return blogService.saveBlog(blog);
     }
 
     //   根据Id查询探店博客
     @GetMapping("/{id}")
-    private Result queryBlogById(@PathVariable("id") Long id) {
+    public Result queryBlogById(@PathVariable("id") Long id) {
         return blogService.queryBlogById(id);
     }
 

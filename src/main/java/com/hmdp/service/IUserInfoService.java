@@ -1,7 +1,9 @@
 package com.hmdp.service;
 
-import com.hmdp.pojo.entity.UserInfo;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.hmdp.pojo.dto.Result;
+import com.hmdp.pojo.dto.UserUpdateDTO;
+import com.hmdp.pojo.entity.UserInfo;
 
 /**
  * <p>
@@ -13,4 +15,7 @@ import com.baomidou.mybatisplus.extension.service.IService;
  */
 public interface IUserInfoService extends IService<UserInfo> {
 
+    Result queryUserDetail(Long userId);
+
+    Result updateUserDetail(UserUpdateDTO updateDTO);
 }

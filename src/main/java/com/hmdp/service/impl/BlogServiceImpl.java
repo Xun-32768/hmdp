@@ -80,10 +80,14 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     }
 
-    public Result queryHotBlog(Integer current){
-        Page<Blog> page =query().orderByDesc("liked").page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
+    @Override
+    public Result queryHotBlog(Integer current) {
+        Page<Blog> page = query().orderByDesc("liked").page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
         List<Blog> blogs = page.getRecords();
-        blogs.forEach(this::queryBlogUser);
+        blogs.forEach(blog -> {
+            this.queryBlogUser(blog);
+            this.isBlogLiked(blog);
+        });
         return Result.ok(blogs);
     }
 
@@ -103,13 +107,10 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
             Long blogId=blog.getId();
             long timeStamp=System.currentTimeMillis();
-//            博主存放到自己发件箱
-            stringRedisTemplate.opsForZSet().add(BLOG_OUTBOX_KEY+userId,blogId.toString(),timeStamp);
-//            获取粉丝列表
-//            List<Follow> follows=followService.query().eq("follow_user_id",user.getId()).list();
+            //获取粉丝列表
             List<String> follows=stringRedisTemplate.opsForSet().members(FOLLOW_KEY+userId).stream().toList();
-//            boolean isFamous=follows.size()>5000;
             boolean isFamous=userInfoMapper.getByUserId(userId).getFans()>5000;
+
 //            小博主直接推送到粉丝的收件箱
             if(!isFamous){
                 for(String id:follows){
@@ -122,6 +123,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                     }
 
                 }
+            }else{
+                //大博主存放到自己发件箱
+                stringRedisTemplate.opsForZSet().add(BLOG_OUTBOX_KEY+userId,blogId.toString(),timeStamp);
             }
 
         }catch (Exception e){
@@ -192,19 +196,28 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         return Result.ok(userDTOS);
     }
 
-    public Result queryMyBlog(Integer current){
+    @Override
+    public Result queryMyBlog(Integer current) {
         UserDTO user = UserHolder.getUser();
-        Page<Blog> page=query().eq("user_id",user.getId()).page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
-        List<Blog> records=page.getRecords();
+        Page<Blog> page = query().eq("user_id", user.getId()).page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
+        List<Blog> records = page.getRecords();
+        records.forEach(blog -> {
+            this.queryBlogUser(blog);
+            this.isBlogLiked(blog);
+        });
         return Result.ok(records);
     }
 
     @Override
-    public Result queryBlogByUserId(Integer current, Long id){
+    public Result queryBlogByUserId(Integer current, Long id) {
         Page<Blog> page = query()
                 .eq("user_id", id).page(new Page<>(current, SystemConstants.MAX_PAGE_SIZE));
         // 获取当前页数据
         List<Blog> records = page.getRecords();
+        records.forEach(blog -> {
+            this.queryBlogUser(blog);
+            this.isBlogLiked(blog);
+        });
         return Result.ok(records);
     }
 

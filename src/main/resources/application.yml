@@ -26,6 +26,11 @@ spring:
     virtual-host: /
     publisher-confirm-type: correlated # 开启异步确认机制
     publisher-returns: true # 开启消息路由失败退回
+    listener:
+      simple:
+        acknowledge-mode: manual # 开启手动 ACK，确保业务执行成功才删消息
+        prefetch: 10 # 限制每个消费者每次预取的消息数量，防止内存被打满
+
   data:
     redis:
       password: 123456
@@ -50,3 +55,10 @@ spring:
 logging:
   level:
     com.hmdp: debug
+
+# MinIO 对象存储配置
+minio:
+  endpoint: http://123.206.227.135:9000
+  access-key: minioadmin
+  secret-key: P@ssword123
+  bucket-name: hmdp-test

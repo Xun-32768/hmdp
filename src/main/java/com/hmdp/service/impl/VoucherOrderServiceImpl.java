@@ -193,7 +193,6 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
     public void listenSeckillOrder(@Payload VoucherOrder voucherOrder){
         log.info("接收到秒杀订单消息，准备入库：订单号={}", voucherOrder.getId());
         try{
-            // 注意：因为这里是异步线程，没有 HTTP 上下文，无法通过 UserHolder 获取 UserId
             handleVoucherOrder(voucherOrder);
 
         }catch(Exception e){
@@ -203,7 +202,8 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             throw e;
         }
     }
-//TODO RabbitMQ实现手动ACK和死信队列，以及数据库消费失败的Redis回滚机制
+//TODO RabbitMQ实现手动ACK和死信队列，以及消费失败的Redis回滚机制
+
 /* //Redis Stream 消息队列的实现
     @EventListener(ApplicationReadyEvent.class)
     public void init() {
