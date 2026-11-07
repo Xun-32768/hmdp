@@ -54,7 +54,7 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
         // 判断 ID 是否存在
         if (!bloomFilter.contains(id)) {
             log.info("检测到缓存穿透攻击，拦截非法请求 ID: {}",id);
-            return null;
+            return Result.fail("店铺不存在");
         }
 //        缓存空值
         Shop shop = cacheClient

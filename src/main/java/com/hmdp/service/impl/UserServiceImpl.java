@@ -105,7 +105,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         stringRedisTemplate.opsForValue().set(RedisConstants.LOGIN_CODE_KEY +phone,code,
                 RedisConstants.LOGIN_CODE_TTL, TimeUnit.MINUTES);
         log.info("验证码：{}", code);
-        return Result.ok();
+        // 未接入真实短信通道，按接口文档约定把验证码回传给前端便于联调
+        return Result.ok(code);
     }
 
     public Result login(LoginFormDTO loginFormDTO) {
@@ -382,7 +383,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     public Result queryUserById(Long useId) {
         User user = getById(useId);
         if (user == null) {
-            return Result.ok();
+            return Result.fail("用户不存在");
         }
         UserDTO userDTO = BeanUtil.copyProperties(user, UserDTO.class);
         return Result.ok(userDTO);

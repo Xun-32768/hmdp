@@ -5,6 +5,8 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.config.RabbitMQConfig;
 import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.pojo.dto.Result;
+import com.hmdp.pojo.dto.UserDTO;
+import com.hmdp.pojo.entity.SeckillVoucher;
 import com.hmdp.pojo.entity.VoucherOrder;
 import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
@@ -79,7 +81,16 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
 
 
     public Result seckillVoucher(Long voucherId) {
-        Long userId = UserHolder.getUser().getId();
+        UserDTO currentUser = UserHolder.getUser();
+        if (currentUser == null) {
+            return Result.fail("用户未登录");
+        }
+        Long userId = currentUser.getId();
+        // 校验优惠券是否存在且为秒杀券
+        SeckillVoucher seckillVoucher = seckillVoucherService.getById(voucherId);
+        if (seckillVoucher == null) {
+            return Result.fail("秒杀优惠券不存在");
+        }
         long orderId = redisIdWorker.nextId("order");
 //       执行lua脚本
         Long result = stringRedisTemplate.execute(
@@ -87,6 +98,10 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
                 Collections.emptyList(),
                 voucherId.toString(), userId.toString(), String.valueOf(orderId)
         );
+        if (result == null) {
+            log.error("秒杀 Lua 脚本执行失败，voucherId={}, userId={}", voucherId, userId);
+            return Result.fail("秒杀失败，请稍后重试");
+        }
         int r = result.intValue();
         if (r != 0) {
             return Result.fail(r == 1 ? "库存不足" : "不能重复下单");

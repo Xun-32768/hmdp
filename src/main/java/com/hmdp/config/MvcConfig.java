@@ -28,10 +28,10 @@ public class MvcConfig implements WebMvcConfigurer {
                         "/shop/**",
                         "/voucher/**",
                         "/shop-type/**",
-                        "/upload/**",
                         "/blog/hot",
                         "/user/code",
                         "/user/login",
+                        "/user/logout",
                         "/user/password-login",
                         "/user/password/reset",
                         "/imgs/**"

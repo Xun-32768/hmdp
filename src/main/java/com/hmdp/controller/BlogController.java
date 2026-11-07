@@ -64,9 +64,13 @@ public class BlogController {
 
     //  个人关注信息(Feed流实现）
     @GetMapping("/of/follow")
-    public Result queryBlogOfFollow(@RequestParam(value="lastId") Long max,
-                                    @RequestParam(value = "offset", defaultValue = "0") Integer offset){
-        return blogService.queryBlogOfFollow(max,offset);
+    public Result queryBlogOfFollow(@RequestParam(value = "lastId", required = false) Long max,
+                                    @RequestParam(value = "offset", defaultValue = "0") Integer offset) {
+        // lastId 未传时默认使用当前时间戳，表示从最新一条开始滚动分页
+        if (max == null) {
+            max = System.currentTimeMillis();
+        }
+        return blogService.queryBlogOfFollow(max, offset);
     }
 
 }

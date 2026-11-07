@@ -53,9 +53,24 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
     private IBlogService blogService;
 
     public Result follow(Long followUserId, Boolean isFollow){
-        Long userId=UserHolder.getUser().getId();
+        UserDTO currentUser = UserHolder.getUser();
+        if (currentUser == null) {
+            return Result.fail("用户未登录");
+        }
+        Long userId=currentUser.getId();
+        if (followUserId == null) {
+            return Result.fail("关注目标用户不能为空");
+        }
+        if (followUserId.equals(userId)) {
+            return Result.fail("不能关注自己");
+        }
         String key=RedisConstants.FOLLOW_KEY+userId;
         if(isFollow){
+            // 幂等：已关注则直接返回成功，避免重复插入产生脏数据
+            Long count = query().eq("user_id", userId).eq("follow_user_id", followUserId).count();
+            if (count != null && count > 0) {
+                return Result.ok();
+            }
             Follow follow=new Follow();
             follow.setUserId(userId);
             follow.setFollowUserId(followUserId);
@@ -128,7 +143,8 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         // 2. 判定哪些是“大V”（示例：粉丝数 > 5000 的用户）
         return followIds.stream().filter(followId ->{
             UserInfo info = userInfoMapper.getByUserId(followId);
-            return info != null && info.getFans() > 5000;}).toList();
+            return info != null && info.getFans() != null && info.getFans() > 5000;
+        }).toList();
     }
 
 

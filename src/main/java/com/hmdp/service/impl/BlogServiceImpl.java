@@ -11,6 +11,7 @@ import com.hmdp.pojo.entity.Blog;
 import com.hmdp.mapper.BlogMapper;
 import com.hmdp.pojo.entity.Follow;
 import com.hmdp.pojo.entity.User;
+import com.hmdp.pojo.entity.UserInfo;
 import com.hmdp.service.IBlogService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.service.IFollowService;
@@ -64,13 +65,20 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 //    查询与blog有关的用户
     private void queryBlogUser(Blog blog) {
         Long userId=blog.getUserId();
-        User user=userService.getById(userId);
+        User user = userId == null ? null : userService.getById(userId);
+        if (user == null) {
+            // 作者已被删除或数据异常时兜底，避免 NPE 导致整个列表接口 500
+            blog.setName("未知用户").setIcon(null);
+            return;
+        }
         blog.setName(user.getNickName()).setIcon(user.getIcon());
     }
 //  查询是否被点过赞
     private void isBlogLiked(Blog blog){
         UserDTO user = UserHolder.getUser();
         if(user == null){
+            // 未登录时按未点赞返回，保证 isLike 字段始终有值（接口文档约定为 false）
+            blog.setIsLike(false);
             return;
         }
         Long userId = user.getId();
@@ -107,9 +115,23 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
             Long blogId=blog.getId();
             long timeStamp=System.currentTimeMillis();
-            //获取粉丝列表
-            List<String> follows=stringRedisTemplate.opsForSet().members(FOLLOW_KEY+userId).stream().toList();
-            boolean isFamous=userInfoMapper.getByUserId(userId).getFans()>5000;
+            //获取粉丝列表：优先取 Redis 关注集合，缺失时回退数据库 tb_follow
+            Set<String> followerSet = stringRedisTemplate.opsForSet().members(FOLLOW_KEY + userId);
+            List<String> follows;
+            if (followerSet != null && !followerSet.isEmpty()) {
+                follows = new ArrayList<>(followerSet);
+            } else {
+                follows = followService.query()
+                        .eq("follow_user_id", userId)
+                        .list()
+                        .stream()
+                        .map(f -> f.getUserId().toString())
+                        .collect(Collectors.toList());
+            }
+            // 博主是否为大V（粉丝数 > 5000），无用户详情记录时按 0 处理
+            UserInfo authorInfo = userInfoMapper.getByUserId(userId);
+            int fansCount = (authorInfo == null || authorInfo.getFans() == null) ? 0 : authorInfo.getFans();
+            boolean isFamous = fansCount > 5000;
 
 //            小博主直接推送到粉丝的收件箱
             if(!isFamous){
@@ -246,9 +268,9 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
                 allTuples.addAll(pullTuples);
             }
         }
-        // 非空判断
+        // 非空判断：无数据时仍返回统一结构的空 ScrollResult，避免前端拿到 data:null
         if (allTuples == null || allTuples.isEmpty()) {
-            return Result.ok();
+            return Result.ok(emptyScrollResult(max));
         }
         // 3. 聚合逻辑：去重、按时间戳倒序排列
         // 同一个博客可能既在大V发件箱也在活跃粉收件箱，需去重
@@ -284,7 +306,7 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         // 5.根据id查询blog
         String idStr = StrUtil.join(",", ids);
         if (ids.isEmpty()) {
-            return Result.ok(Collections.emptyList());
+            return Result.ok(emptyScrollResult(max));
         }
         List<Blog> blogs = query().in("id", ids).last("ORDER BY FIELD(id," + idStr + ")").list();
 
@@ -302,6 +324,17 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         r.setMinTime(minTime);
 
         return Result.ok(r);
+    }
+
+    /**
+     * 构造空的分页结果，保证 /blog/of/follow 始终返回 {list,minTime,offset} 结构
+     */
+    private ScrollResult emptyScrollResult(Long max) {
+        ScrollResult r = new ScrollResult();
+        r.setList(Collections.emptyList());
+        r.setMinTime(max == null ? 0L : max);
+        r.setOffset(0);
+        return r;
     }
 
     public void rebuildFeed(Long userId){

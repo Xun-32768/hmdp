@@ -14,7 +14,9 @@ local orderKey = 'seckill:order:' .. voucherId
 
 -- 3.脚本业务
 -- 3.1.判断库存是否充足 get stockKey
-if(tonumber(redis.call('get', stockKey)) <= 0) then
+local stock = tonumber(redis.call('get', stockKey))
+-- 库存 key 不存在（未预热）时按库存不足处理，避免 tonumber(false) 报错
+if(stock == nil or stock <= 0) then
     -- 3.2.库存不足，返回1
     return 1
 end

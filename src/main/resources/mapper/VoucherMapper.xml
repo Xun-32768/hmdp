@@ -5,9 +5,11 @@
     <select id="queryVoucherOfShop" resultType="com.hmdp.pojo.entity.Voucher" parameterType="java.lang.Long">
         SELECT
             v.`id`, v.`shop_id`, v.`title`, v.`sub_title`, v.`rules`, v.`pay_value`,
-            v.`actual_value`, v.`type`, sv.`stock` , sv.begin_time , sv.end_time
+            v.`actual_value`, v.`type`, v.`status`,
+            sv.`stock`, sv.`begin_time`, sv.`end_time`
         FROM tb_voucher v
-                 LEFT JOIN  tb_seckill_voucher sv ON v.id = sv.voucher_id
+                 LEFT JOIN tb_seckill_voucher sv ON v.id = sv.voucher_id
         WHERE v.shop_id = #{shopId} AND v.status = 1
+        ORDER BY v.type ASC, v.id ASC
     </select>
 </mapper>

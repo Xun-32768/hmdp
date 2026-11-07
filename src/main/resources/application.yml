@@ -58,7 +58,7 @@ logging:
 
 # MinIO 对象存储配置
 minio:
-  endpoint: http://123.206.227.135:9000
+  endpoint: http://127.0.0.1:9000
   access-key: minioadmin
   secret-key: P@ssword123
   bucket-name: hmdp-test

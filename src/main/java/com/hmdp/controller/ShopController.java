@@ -1,15 +1,12 @@
 package com.hmdp.controller;
 
 import cn.hutool.core.util.StrUtil;
-import cn.hutool.db.AbstractDb;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.pojo.dto.Result;
 import com.hmdp.pojo.entity.Shop;
 import com.hmdp.service.IShopService;
 import com.hmdp.utils.SystemConstants;
 import jakarta.annotation.Resource;
-import org.redisson.api.RBloomFilter;
-import org.redisson.api.RedissonClient;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -27,8 +24,6 @@ public class ShopController {
 
     @Resource
     private IShopService shopService;
-    @Resource
-    private RedissonClient redissonClient;
     /**
      * 根据商铺名称关键字分页查询商铺信息
      * @param name 商铺名称关键字

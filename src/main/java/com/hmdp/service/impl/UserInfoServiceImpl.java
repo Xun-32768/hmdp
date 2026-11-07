@@ -69,6 +69,16 @@ public class UserInfoServiceImpl extends ServiceImpl<UserInfoMapper, UserInfo> i
         if (info.getCredits() == null) {
             info.setCredits(0);
         }
+        // 会员等级与性别、生日兜底，保证返回结构完整（接口文档约定 level 为 0~9）
+        if (info.getLevel() == null) {
+            info.setLevel((byte) 0);
+        }
+        if (info.getFans() == null) {
+            info.setFans(0);
+        }
+        if (info.getFollowee() == null) {
+            info.setFollowee(0);
+        }
 
         info.setCreateTime(null);
         info.setUpdateTime(null);
