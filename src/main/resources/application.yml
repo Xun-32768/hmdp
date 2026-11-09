@@ -1,5 +1,11 @@
 server:
   port: 30002
+  tomcat:
+    threads:
+      max: 500         # 最大工作线程数（默认200）
+      min-spare: 50    # 最小空闲线程数
+    accept-count: 2000 # 允许在队列中排队的最大连接数（关键！防止连接直接被拒）
+    max-connections: 5000 # 最大允许建立的 TCP 连接数
 
 # 192.168.29.255
 mybatis-plus:
@@ -9,11 +15,19 @@ mybatis-plus:
 spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://127.0.0.1:3307/hmdp?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC&characterEncoding=utf8
+    # serverTimezone 必须与业务时区（SystemConstants.BIZ_ZONE_ID）保持一致，
+    # 否则 timestamp 列的字面量与 Java 侧的 LocalDateTime 比较时会产生时差
+    url: jdbc:mysql://127.0.0.1:3307/hmdp?allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
     username: root
     password: 123456
   jackson:
     default-property-inclusion: non_null # JSON处理时忽略非空字段
+  # 定时任务调度线程池：默认仅 1 条线程，当有多个定时任务（库存对账、超时关单、死信巡检、MQ确认超时清理）时会互相阻塞
+  task:
+    scheduling:
+      pool:
+        size: 4
+      thread-name-prefix: hmdp-task-
   servlet:
     multipart:
       max-file-size: 5MB
@@ -54,7 +68,7 @@ spring:
 
 logging:
   level:
-    com.hmdp: debug
+    '[com.hmdp]': debug
 
 # MinIO 对象存储配置
 minio:

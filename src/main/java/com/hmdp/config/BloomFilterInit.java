@@ -2,24 +2,23 @@ package com.hmdp.config;
 
 import com.hmdp.pojo.entity.Shop;
 import com.hmdp.service.IShopService;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RBloomFilter;
 import org.redisson.api.RedissonClient;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 import java.util.List;
 
-//布隆过滤器，在项目启动时将所有shop的Id存放在过滤器中国
+//布隆过滤器，在项目启动时将所有shop的Id存放在过滤器中
 @Component
 @Slf4j
+@RequiredArgsConstructor
 public class BloomFilterInit implements CommandLineRunner {
 
-    @Autowired
-    private RedissonClient redissonClient;
+    private final RedissonClient redissonClient;
 
-    @Autowired
-    private IShopService shopService;
+    private final IShopService shopService;
 
     @Override
     public void run(String... args) {

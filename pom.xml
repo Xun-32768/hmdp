@@ -92,6 +92,13 @@
             <artifactId>spring-boot-starter-amqp</artifactId>
         </dependency>
 
+<!--        生成配置元数据，让 application.yml 中的自定义配置（如 minio.*）可被 IDE 识别-->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- MinIO 客户端 -->
         <dependency>
             <groupId>io.minio</groupId>
@@ -122,6 +129,7 @@
                     <source>21</source>
                     <target>21</target>
                     <encoding>UTF-8</encoding>
+                    <parameters>true</parameters>
                 </configuration>
             </plugin>
             <plugin>

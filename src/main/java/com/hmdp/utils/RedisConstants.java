@@ -15,6 +15,13 @@ public class RedisConstants {
     public static final Long LOCK_SHOP_TTL = 10L;
 
     public static final String SECKILL_STOCK_KEY = "seckill:stock:";
+    public static final String SECKILL_ORDER_KEY = "seckill:order:";
+    // 秒杀时间窗口，值格式为 "{beginEpochMilli}:{endEpochMilli}"
+    public static final String SECKILL_TIME_KEY = "seckill:time:";
+    // 秒杀相关 Redis key 的兜底存活时间（分钟），实际以 end_time 为准
+    public static final Long SECKILL_KEY_TTL_MINUTES = 24 * 60L;
+    // 订单未支付超时关单时间（分钟）
+    public static final Long SECKILL_ORDER_TIMEOUT_MINUTES = 15L;
     public static final String BLOG_LIKED_KEY = "blog:liked:";
     public static final String FEED_KEY = "feed:";
     public static final String SHOP_GEO_KEY = "shop:geo:";

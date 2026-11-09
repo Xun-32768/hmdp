@@ -16,5 +16,11 @@ public interface IVoucherService extends IService<Voucher> {
 
     void addSeckillVoucher(Voucher voucher);
 
+    /**
+     * 把秒杀库存与活动时间窗口写入 Redis（预热/对账时使用）
+     */
+    void cacheSeckillVoucher(Long voucherId, Integer stock,
+                             java.time.LocalDateTime beginTime, java.time.LocalDateTime endTime);
+
     Result queryVoucherOfShop(Long shopId);
 }
