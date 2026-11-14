@@ -357,7 +357,12 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
         }
         switch (result) {
             // 落库成功或幂等命中：ACK 确认当前消息，完成生命周期闭环
-            case SUCCESS -> channel.basicAck(deliveryTag, false);
+            case SUCCESS -> {
+                channel.basicAck(deliveryTag, false);
+                // 订单落库成功后，立即投递一条 15 分钟超时延迟消息；
+                // 消息在延时队列到期后作为死信进入 seckill.dlq，执行未支付检查与取消回滚
+                publishToTimeoutDelayQueue(voucherOrder);
+            }
             case ALREADY_ORDERED -> {
                 // 用户在该券下已有其他订单。Redis 里的下单标记属于那一笔成功订单，
                 // 直接 ACK 消费结束即可。
@@ -456,6 +461,28 @@ public class VoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vou
             log.error("秒杀订单投递死信队列失败，需人工介入，订单号={}, voucherId={}, userId={}, reason={}",
                     voucherOrder.getId(), voucherOrder.getVoucherId(), voucherOrder.getUserId(), reason, e);
             return false;
+        }
+    }
+
+    /**
+     * 投递到 15 分钟超时延迟队列。
+     *
+     * <p>消息在该队列等待 15 分钟（TTL）后，由 RabbitMQ 自动作为死信路由到
+     * {@link RabbitMQConfig#SECKILL_DLQ} 队列，执行未支付检查与自动关单回滚。
+     *
+     * @param voucherOrder 成功落库的订单
+     */
+    private void publishToTimeoutDelayQueue(VoucherOrder voucherOrder) {
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.SECKILL_EXCHANGE,
+                    RabbitMQConfig.SECKILL_TIMEOUT_DELAY_ROUTING_KEY,
+                    voucherOrder
+            );
+            log.info("秒杀订单已投递15分钟超时延迟队列，订单号={}", voucherOrder.getId());
+        } catch (Exception e) {
+            log.error("秒杀订单投递超时延迟队列失败，由定时任务 closeTimeoutOrders 兜底关单，订单号={}",
+                    voucherOrder.getId(), e);
         }
     }
 }

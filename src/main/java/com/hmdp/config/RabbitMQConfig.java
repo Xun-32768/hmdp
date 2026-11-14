@@ -69,6 +69,14 @@ public class RabbitMQConfig {
     /** 消息头：进入死信的原因 */
     public static final String HEADER_FAIL_REASON = "x-seckill-fail-reason";
 
+    /* ==================== 15分钟订单超时未支付延迟队列 ==================== */
+    /** 订单超时延迟暂存队列（无人消费，TTL 到期后作为死信路由到 seckill.dlx） */
+    public static final String SECKILL_TIMEOUT_DELAY_QUEUE = "seckill.order.timeout.delay.queue";
+    /** 订单超时延迟消息路由键 */
+    public static final String SECKILL_TIMEOUT_DELAY_ROUTING_KEY = "seckill.order.timeout.delay";
+    /** 订单超时时长（15分钟，单位毫秒） */
+    public static final long SECKILL_ORDER_TTL_MILLIS = 15 * 60 * 1000L;
+
     /* ==================== 重试超限 / 确定性失败 ==================== */
 
     /**
@@ -185,6 +193,33 @@ public class RabbitMQConfig {
     public Binding seckillRetryBinding(@Qualifier("seckillRetryQueue") Queue seckillRetryQueue,
                                       @Qualifier("seckillRetryExchange") DirectExchange seckillRetryExchange) {
         return BindingBuilder.bind(seckillRetryQueue).to(seckillRetryExchange).with(SECKILL_RETRY_ROUTING_KEY);
+    }
+
+    /**
+     * 15分钟超时延迟队列。
+     *
+     * <p>下单成功后消息先放入此队列，15分钟内无人消费。
+     * TTL 到期后，RabbitMQ 自动将其作为死信投递到 {@link #SECKILL_DLX} 死信交换机，
+     * 进入 {@link #SECKILL_DLQ} 队列执行超时关单与库存/资格回滚。
+     *
+     * @return 延迟队列
+     */
+    @Bean
+    public Queue seckillTimeoutDelayQueue() {
+        return QueueBuilder.durable(SECKILL_TIMEOUT_DELAY_QUEUE)
+                .withArgument("x-message-ttl", (int) SECKILL_ORDER_TTL_MILLIS)
+                .deadLetterExchange(SECKILL_DLX)
+                .deadLetterRoutingKey(SECKILL_DLQ_ROUTING_KEY)
+                .build();
+    }
+
+    /**
+     * 把超时延迟队列绑定到业务主交换机。
+     */
+    @Bean
+    public Binding seckillTimeoutDelayBinding(@Qualifier("seckillTimeoutDelayQueue") Queue seckillTimeoutDelayQueue,
+                                             @Qualifier("seckillExchange") DirectExchange seckillExchange) {
+        return BindingBuilder.bind(seckillTimeoutDelayQueue).to(seckillExchange).with(SECKILL_TIMEOUT_DELAY_ROUTING_KEY);
     }
 
     /**

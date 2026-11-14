@@ -7,7 +7,7 @@ server:
     accept-count: 2000 # 允许在队列中排队的最大连接数（关键！防止连接直接被拒）
     max-connections: 5000 # 最大允许建立的 TCP 连接数
 
-# 192.168.29.255
+
 mybatis-plus:
   mapper-locations: classpath:mapper/*xml
   type-aliases-package: com.hmdp.pojo.entity
@@ -22,7 +22,7 @@ spring:
     password: 123456
   jackson:
     default-property-inclusion: non_null # JSON处理时忽略非空字段
-  # 定时任务调度线程池：默认仅 1 条线程，当有多个定时任务（库存对账、超时关单、死信巡检、MQ确认超时清理）时会互相阻塞
+  # 定时任务调度线程池：默认仅 1 条线程，当有多个定时任务时会互相阻塞
   task:
     scheduling:
       pool:
@@ -32,6 +32,7 @@ spring:
     multipart:
       max-file-size: 5MB
       max-request-size: 10MB
+  # RabbitMQ
   rabbitmq:
     host: 127.0.0.1
     port: 5673
