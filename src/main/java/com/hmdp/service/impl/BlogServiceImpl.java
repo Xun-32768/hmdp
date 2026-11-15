@@ -15,25 +15,33 @@ import com.hmdp.pojo.entity.UserInfo;
 import com.hmdp.service.IBlogService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.service.IFollowService;
-import com.hmdp.service.IUserInfoService;
 import com.hmdp.service.IUserService;
-import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.config.RabbitMQConfig;
+import com.hmdp.pojo.dto.BlogPushDTO;
 import com.hmdp.utils.SystemConstants;
 import com.hmdp.utils.UserHolder;
 import jakarta.annotation.Resource;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DataAccessException;
+import org.springframework.data.redis.core.RedisOperations;
+import org.springframework.data.redis.core.SessionCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import static com.hmdp.utils.RedisConstants.*;
 
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -59,8 +67,26 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
     private StringRedisTemplate stringRedisTemplate;
     @Resource
     private UserInfoMapper userInfoMapper;
-//    大v发件箱
+    @Resource
+    private RabbitTemplate rabbitTemplate;
 
+    /**
+     * 写扩散脚本：对一批收件箱执行 EXISTS 过滤 + ZADD + 裁剪 + EXPIRE。
+     * <p>必须放在 Lua 里，因为 Pipeline 回调中命令只是入队，拿不到即时返回值，
+     * 在 Java 侧做 {@code exists} 判断会永远得到 null/false。
+     */
+    private static final DefaultRedisScript<Long> FEED_PUSH_SCRIPT;
+    /** 批量写入单个 ZSet 脚本：用于关注/重建时回填历史笔记 */
+    private static final DefaultRedisScript<Long> FEED_BULK_SCRIPT;
+    static {
+        FEED_PUSH_SCRIPT = new DefaultRedisScript<>();
+        FEED_PUSH_SCRIPT.setLocation(new ClassPathResource("feed_push.lua"));
+        FEED_PUSH_SCRIPT.setResultType(Long.class);
+
+        FEED_BULK_SCRIPT = new DefaultRedisScript<>();
+        FEED_BULK_SCRIPT.setLocation(new ClassPathResource("feed_bulk.lua"));
+        FEED_BULK_SCRIPT.setResultType(Long.class);
+    }
 
 //    查询与blog有关的用户
     private void queryBlogUser(Blog blog) {
@@ -103,60 +129,164 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Transactional(rollbackFor = Exception.class)
     public Result saveBlog(Blog blog){
-        Long userId= UserHolder.getUser().getId();
+        Long userId = UserHolder.getUser().getId();
         blog.setUserId(userId);
-        try {
-            if(blog.getContent()==null ||  blog.getShopId() == null || blog.getTitle() == null ){
-                return Result.fail("笔记不完整，发布失败");
-            }
-//            保存博客到数据库
-            boolean isSuccess=save(blog);
-            if(!isSuccess) return Result.fail("发布失败");
-
-            Long blogId=blog.getId();
-            long timeStamp=System.currentTimeMillis();
-            //获取粉丝列表：优先取 Redis 关注集合，缺失时回退数据库 tb_follow
-            Set<String> followerSet = stringRedisTemplate.opsForSet().members(FOLLOW_KEY + userId);
-            List<String> follows;
-            if (followerSet != null && !followerSet.isEmpty()) {
-                follows = new ArrayList<>(followerSet);
-            } else {
-                follows = followService.query()
-                        .eq("follow_user_id", userId)
-                        .list()
-                        .stream()
-                        .map(f -> f.getUserId().toString())
-                        .collect(Collectors.toList());
-            }
-            // 博主是否为大V（粉丝数 > 5000），无用户详情记录时按 0 处理
-            UserInfo authorInfo = userInfoMapper.getByUserId(userId);
-            int fansCount = (authorInfo == null || authorInfo.getFans() == null) ? 0 : authorInfo.getFans();
-            boolean isFamous = fansCount > 5000;
-
-//            小博主直接推送到粉丝的收件箱
-            if(!isFamous){
-                for(String id:follows){
-                    String key=FEED_KEY+id;
-//                    Redis中存在key时才推送，即只推送活跃用户
-                    if(stringRedisTemplate.hasKey(key)){
-                        stringRedisTemplate.opsForZSet().add(key,blog.getId().toString(),timeStamp);
-//                         移除超出收件箱容量的部分
-                        stringRedisTemplate.opsForZSet().removeRange(key,0,-(FEED_MAX_LEN+1));
-                    }
-
-                }
-            }else{
-                //大博主存放到自己发件箱
-                stringRedisTemplate.opsForZSet().add(BLOG_OUTBOX_KEY+userId,blogId.toString(),timeStamp);
-            }
-
-        }catch (Exception e){
-            log.error("博客保存失败",e);
-            return Result.fail("博客保存失败");
+        if (blog.getContent() == null || blog.getShopId() == null || blog.getTitle() == null) {
+            return Result.fail("笔记不完整，发布失败");
         }
+        //            保存博客到数据库
+        if (!save(blog)) {
+            return Result.fail("发布失败");
+        }
+        Long blogId = blog.getId();
+        long timeStamp = blog.getCreateTime() == null
+                ? System.currentTimeMillis()
+                : blog.getCreateTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
 
-        return Result.ok(blog.getId());
+        // 1. 判定博主等级（优先依据 role_type 或 fans 计数）
+        boolean isFamous = isFamousAuthor(userId);
+        BlogPushDTO dto = isFamous ? null : new BlogPushDTO(blogId, userId, timeStamp);
+        log.info("saveBlog: userId={}, isFamous={}, dto={}", userId, isFamous, dto);
 
+        // 2. 推拉结合架构：
+        //    - 大V：只写自身发件箱 blog:outbox:{userId}，不写任何粉丝维度数据（走读扩散）；
+        //    - 小V：彻底不写发件箱（避免99%小博主发件箱无读取方造成的内存浪费），专走异步写扩散投递 MQ。
+        //    发件箱写入与 MQ 都推迟到事务提交后执行。
+        runAfterCommit(() -> {
+            log.info("runAfterCommit executing: isFamous={}, dto={}", isFamous, dto);
+            if (isFamous) {
+                writeOutbox(userId, blogId, timeStamp);
+            } else if (dto != null) {
+                publishPush(dto);
+            }
+        });
+        return Result.ok(blogId);
+    }
+
+    /**
+     * 判断博主是否为大V。
+     *
+     * <p>优先读取 DB 中的 role_type（0-小V，1-大V），若未设置则依据粉丝数缓存与阈值。
+     *
+     * @param authorId 博主 ID
+     * @return true 为大V，false 为小V
+     */
+    private boolean isFamousAuthor(Long authorId) {
+        UserInfo authorInfo = userInfoMapper.getByUserId(authorId);
+        if (authorInfo != null) {
+            if (authorInfo.getRoleType() != null) {
+                return authorInfo.getRoleType() == 1;
+            }
+            int fans = authorInfo.getFans() == null ? 0 : authorInfo.getFans();
+            return fans >= FAMOUS_FAN_THRESHOLD;
+        }
+        return getAuthorFans(authorId) >= FAMOUS_FAN_THRESHOLD;
+    }
+
+    /**
+     * 读取博主粉丝数，优先走 Redis 缓存。
+     *
+     * <p>粉丝数是发博分流与刷流大V判定的唯一依据，
+     * 若每次都用 {@code SELECT COUNT(*)} 会随粉丝量增长拖垮数据库，
+     * 因此读 {@code tb_user_info.fans} 并缓存 24 小时，
+     * 由关注/取关链路主动失效保证时效性。
+     *
+     * @param authorId 博主 ID
+     * @return 粉丝数，不存在时返回 0
+     */
+    private int getAuthorFans(Long authorId) {
+        String cacheKey = USER_FANS_KEY + authorId;
+        try {
+            String cached = stringRedisTemplate.opsForValue().get(cacheKey);
+            if (cached != null) {
+                return Integer.parseInt(cached);
+            }
+        } catch (Exception e) {
+            log.warn("读取粉丝数缓存失败，降级查库，authorId={}", authorId, e);
+        }
+        // 缓存未命中：查单行字段（走主键，耗时可忽略）
+        UserInfo authorInfo = userInfoMapper.getByUserId(authorId);
+        int fans = (authorInfo == null || authorInfo.getFans() == null) ? 0 : authorInfo.getFans();
+        try {
+            stringRedisTemplate.opsForValue().set(
+                    cacheKey, String.valueOf(fans), USER_FANS_TTL_HOURS, TimeUnit.HOURS);
+        } catch (Exception e) {
+            log.warn("写入粉丝数缓存失败，authorId={}", authorId, e);
+        }
+        return fans;
+    }
+
+    /**
+     * 写入博主发件箱并裁剪到最新 {@link com.hmdp.utils.RedisConstants#BLOG_OUTBOX_MAX_LEN} 条。
+     *
+     * @param authorId   博主 ID
+     * @param blogId     笔记 ID
+     * @param timeStamp  发布时间戳（毫秒），作为 ZSet 分数
+     */
+    private void writeOutbox(Long authorId, Long blogId, long timeStamp) {
+        String outboxKey = BLOG_OUTBOX_KEY + authorId;
+        try {
+            // 复用同一脚本：只操作单个 key，且 skipIfAbsent=0 表示不存在也创建
+            stringRedisTemplate.execute(
+                    FEED_PUSH_SCRIPT,
+                    Collections.singletonList(outboxKey),
+                    blogId.toString(),
+                    String.valueOf(timeStamp),
+                    String.valueOf(BLOG_OUTBOX_MAX_LEN),
+                    String.valueOf(TimeUnit.DAYS.toSeconds(BLOG_OUTBOX_TTL_DAYS)),
+                    "0"
+            );
+        } catch (Exception e) {
+            // 发件箱写失败不能阻断发博：小博主仍有 MQ 写扩散兜底；
+            // 大V 只靠发件箱被粉丝拉取，这条笔记会暂时不可见，需要人工补推。
+            log.error("写入博主发件箱失败，authorId={}, blogId={}", authorId, blogId, e);
+        }
+    }
+
+    /**
+     * 在事务提交后执行 Feed 后续动作（没有活动事务时立即执行）。
+     *
+     * <p>Redis 写入与 MQ 投递都不能放在事务内：事务回滚后 Redis 已写入的条目无法回滚，
+     * MQ 消费者也可能在 {@code tb_blog} 提交前取到消息。
+     *
+     * @param action 待执行动作
+     */
+    private void runAfterCommit(Runnable action) {
+        Runnable safe = () -> {
+            try {
+                action.run();
+            } catch (Exception e) {
+                log.error("事务提交后执行 Feed 后续动作失败", e);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    safe.run();
+                }
+            });
+        } else {
+            safe.run();
+        }
+    }
+
+    /**
+     * 投递写扩散事件。
+     *
+     * @param dto 推送事件
+     */
+    private void publishPush(BlogPushDTO dto) {
+        try {
+            log.info("publishPush sending message: exchange={}, routingKey={}, dto={}",
+                    RabbitMQConfig.BLOG_FEED_EXCHANGE, RabbitMQConfig.BLOG_FEED_PUSH_ROUTING_KEY, dto);
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.BLOG_FEED_EXCHANGE,
+                    RabbitMQConfig.BLOG_FEED_PUSH_ROUTING_KEY,
+                    dto);
+        } catch (Exception e) {
+            log.error("投递 Feed 写扩散事件失败，blogId={}, authorId={}", dto.getBlogId(), dto.getAuthorId(), e);
+        }
     }
 
 
@@ -245,127 +375,359 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
 
     @Override
     public Result queryBlogOfFollow(Long max, Integer offset) {
-        // 1.获取当前用户
-        Long userId = UserHolder.getUser().getId();
-        // 2.查询收件箱 ZREVRANGEBYSCORE key Max Min LIMIT offset count
-        String key = "feed:" + userId;
-        long pageSize=3;
-        Set<ZSetOperations.TypedTuple<String>> pushTuples = stringRedisTemplate.opsForZSet()
-                .reverseRangeByScoreWithScores(key, 0, max, offset, pageSize);
-
-        //获取所有关注的大V的Id
-        List<Long> famousIds=followService.queryFamousFollows(userId);
-        List<ZSetOperations.TypedTuple<String>> allTuples = new ArrayList<>();
-        if (pushTuples != null) {
-            allTuples.addAll(pushTuples);
+        UserDTO currentUser = UserHolder.getUser();
+        if (currentUser == null) {
+            return Result.fail("用户未登录");
         }
-        // 遍历大V，手动拉取（Pull）
-        for (Long famousId : famousIds) {
-            // 从大V的发件箱拉取在本次分页时间范围内的动态
-            Set<ZSetOperations.TypedTuple<String>> pullTuples = stringRedisTemplate.opsForZSet()
-                    .reverseRangeByScoreWithScores(BLOG_OUTBOX_KEY + famousId, 0, max, offset, pageSize);
-            if (pullTuples != null) {
-                allTuples.addAll(pullTuples);
+        Long userId = currentUser.getId();
+        long startTime = max == null ? System.currentTimeMillis() : max;
+        int startOffset = offset == null || offset < 0 ? 0 : offset;
+        long pageSize = FEED_PAGE_SIZE;
+
+        String inboxKey = FEED_KEY + userId;
+        boolean hasInbox = Boolean.TRUE.equals(stringRedisTemplate.hasKey(inboxKey));
+
+        // 多源合并时不能把 offset 下推给每个数据源（会被放大 N 倍），
+        // 因此各路先多取 offset 条，合并去重后再统一跳过 while 循环前的 offset 条
+        long fetchLimit = pageSize + startOffset;
+
+        // 大顶堆：score 越大（越新）越先出堆
+        PriorityQueue<FeedEntry> heap = new PriorityQueue<>(
+                (a, b) -> {
+                    int byScore = Long.compare(b.score, a.score);
+                    // 同分时按 blogId 排序，保证分页游标在多源合并下依然稳定
+                    return byScore != 0 ? byScore : Long.compare(b.blogId, a.blogId);
+                });
+
+        if (hasInbox) {
+            // 源 A（热用户）：从 Redis 个人收件箱读取小博主动态
+            Set<ZSetOperations.TypedTuple<String>> inboxTuples = stringRedisTemplate.opsForZSet()
+                    .reverseRangeByScoreWithScores(inboxKey, 0, startTime, 0, fetchLimit);
+            enqueue(heap, inboxTuples);
+        } else {
+            // 方案 B（冷用户冷启动首刷）：
+            // 1. 加分布式互斥锁（SETNX 10s），防止高频并发打爆 MySQL
+            // 2. 抢到锁的线程同步查库获取关注小V最新动态放入堆中，保障首屏秒出不白屏
+            // 3. 同时异步投递 MQ 触发收件箱原子回填
+            boolean acquiredLock = tryAcquireRebuildLock(userId);
+            if (acquiredLock) {
+                try {
+                    // 同步查库小V动态
+                    loadSmallBloggerBlogsFromDb(userId, startTime, fetchLimit, heap);
+                    // 异步触发收件箱回填
+                    triggerRebuild(userId);
+                } finally {
+                    releaseRebuildLock(userId);
+                }
+            } else {
+                // 未抢到锁说明并发请求正在重建，尝试读收件箱或异步等回填
+                Set<ZSetOperations.TypedTuple<String>> inboxTuples = stringRedisTemplate.opsForZSet()
+                        .reverseRangeByScoreWithScores(inboxKey, 0, startTime, 0, fetchLimit);
+                enqueue(heap, inboxTuples);
             }
         }
-        // 非空判断：无数据时仍返回统一结构的空 ScrollResult，避免前端拿到 data:null
-        if (allTuples == null || allTuples.isEmpty()) {
-            return Result.ok(emptyScrollResult(max));
-        }
-        // 3. 聚合逻辑：去重、按时间戳倒序排列
-        // 同一个博客可能既在大V发件箱也在活跃粉收件箱，需去重
-        List<ZSetOperations.TypedTuple<String>> sortedTuples = allTuples.stream()
-                .collect(Collectors.toMap(
-                        ZSetOperations.TypedTuple::getValue, // 以博客ID为Key去重
-                        t -> t,
-                        (existing, replacement) -> existing // 保留前者
-                ))
-                .values().stream()
-                .sorted((a, b) -> b.getScore().compareTo(a.getScore())) // 按Score（时间戳）倒序
-                .limit(pageSize) // 取当前分页的大小
-                .toList();
 
-        // 4.解析数据：blogId、minTime（时间戳）、offset
+        // 源 B：关注的大V发件箱，O(1) 取出大V集合后用 Pipeline 一次性拉取，避免串行 N 次 RTT
+        List<Long> famousIds = followService.queryFamousFollows(userId);
+        if (famousIds != null && !famousIds.isEmpty()) {
+            List<Object> pipeResults = pullFamousOutbox(famousIds, startTime, fetchLimit);
+            for (Object raw : pipeResults) {
+                if (raw instanceof Set<?> set) {
+                    @SuppressWarnings("unchecked")
+                    Set<ZSetOperations.TypedTuple<String>> tuples = (Set<ZSetOperations.TypedTuple<String>>) set;
+                    enqueue(heap, tuples);
+                }
+            }
+        }
+
+        // 归并 + 去重 + 统一跳过 offset
         List<Long> ids = new ArrayList<>();
-        long minTime = 0; // 2
-        int os = 1; // 2
-        for (ZSetOperations.TypedTuple<String> tuple : sortedTuples) { // 5 4 4 2 2
-            // 4.1.获取id
-            ids.add(Long.valueOf(tuple.getValue()));
-            // 4.2.获取分数(时间戳）
-            long time = tuple.getScore().longValue();
-            if(time == minTime){
-                os++;
-            }else{
-                minTime = time;
-                os = 1;
+        Set<Long> seen = new HashSet<>();
+        List<Long> scores = new ArrayList<>();
+        int skipped = 0;
+        while (ids.size() < pageSize && !heap.isEmpty()) {
+            FeedEntry entry = heap.poll();
+            if (!seen.add(entry.blogId)) {
+                continue;
+            }
+            // 游标语义：score == startTime 的这批数据中，跳过前 offset 条（上一页已返回的部分）
+            if (entry.score == startTime && skipped < startOffset) {
+                skipped++;
+                continue;
+            }
+            ids.add(entry.blogId);
+            scores.add(entry.score);
+        }
+        if (ids.isEmpty()) {
+            // 保留当前游标：重置成 offset=0 会让客户端从头再拉一遍同一批数据
+            return Result.ok(emptyScrollResult(startTime, startOffset));
+        }
+
+        // 计算下一页游标：minTime 为本页最小时间戳。
+        // 若整页都落在 startTime（上一页的边界时间戳）上，说明同一时间戳的记录还没取完，
+        // offset 必须累计为 startOffset + 本页条数；否则下一页会跳过不足 offset 条而重复返回。
+        long minTime = scores.get(scores.size() - 1);
+        int nextOffset;
+        if (minTime == startTime) {
+            nextOffset = startOffset + scores.size();
+        } else {
+            nextOffset = 0;
+            for (Long score : scores) {
+                if (score == minTime) {
+                    nextOffset++;
+                }
             }
         }
-        os = (minTime == max ? os : os + offset);
 
-        // 5.根据id查询blog
+        // 按 ids 顺序回查，ORDER BY FIELD 保证与堆序一致
         String idStr = StrUtil.join(",", ids);
-        if (ids.isEmpty()) {
-            return Result.ok(emptyScrollResult(max));
-        }
         List<Blog> blogs = query().in("id", ids).last("ORDER BY FIELD(id," + idStr + ")").list();
-
-        for (Blog blog : blogs) {
-            // 5.1.查询blog有关的用户
+        blogs.forEach(blog -> {
             queryBlogUser(blog);
-            // 5.2.查询blog是否被点赞
             isBlogLiked(blog);
-        }
+        });
 
-        // 6.封装并返回
         ScrollResult r = new ScrollResult();
         r.setList(blogs);
-        r.setOffset(os);
         r.setMinTime(minTime);
-
+        r.setOffset(nextOffset);
         return Result.ok(r);
     }
 
     /**
-     * 构造空的分页结果，保证 /blog/of/follow 始终返回 {list,minTime,offset} 结构
+     * 方案 B：冷启动时加分布式互斥锁，防止并发刷流打崩 MySQL。
      */
-    private ScrollResult emptyScrollResult(Long max) {
+    private boolean tryAcquireRebuildLock(Long userId) {
+        try {
+            Boolean success = stringRedisTemplate.opsForValue().setIfAbsent(
+                    FEED_REBUILD_LOCK_KEY + userId,
+                    "1",
+                    FEED_REBUILD_LOCK_TTL_SECONDS,
+                    TimeUnit.SECONDS
+            );
+            return Boolean.TRUE.equals(success);
+        } catch (Exception e) {
+            log.error("获取 Feed 重建互斥锁失败，userId={}", userId, e);
+            return false;
+        }
+    }
+
+    /**
+     * 释放分布式重建互斥锁。
+     */
+    private void releaseRebuildLock(Long userId) {
+        try {
+            stringRedisTemplate.delete(FEED_REBUILD_LOCK_KEY + userId);
+        } catch (Exception e) {
+            log.warn("释放 Feed 重建互斥锁异常，userId={}", userId, e);
+        }
+    }
+
+    /**
+     * 方案 B：同步从 MySQL 查询当前用户关注的小V的动态，装入归并大顶堆。
+     *
+     * <p>走 idx_user_create(user_id, create_time) 联合索引，毫秒级响应。
+     */
+    private void loadSmallBloggerBlogsFromDb(Long userId, long startTime, long fetchLimit, PriorityQueue<FeedEntry> heap) {
+        List<Follow> follows = followService.query().eq("user_id", userId).list();
+        if (follows == null || follows.isEmpty()) {
+            return;
+        }
+        List<Long> allFollowIds = follows.stream().map(Follow::getFollowUserId).toList();
+        // 排除大V
+        List<Long> famousIds = followService.queryFamousFollows(userId);
+        Set<Long> famousSet = famousIds == null ? Collections.emptySet() : new HashSet<>(famousIds);
+        List<Long> smallFollowIds = allFollowIds.stream().filter(id -> !famousSet.contains(id)).toList();
+        if (smallFollowIds.isEmpty()) {
+            return;
+        }
+
+        LocalDateTime maxTime = LocalDateTime.ofInstant(java.time.Instant.ofEpochMilli(startTime), java.time.ZoneId.systemDefault());
+        List<Blog> blogs = query()
+                .select("id", "create_time")
+                .in("user_id", smallFollowIds)
+                .le("create_time", maxTime)
+                .orderByDesc("create_time")
+                .last("LIMIT " + fetchLimit)
+                .list();
+
+        if (blogs != null) {
+            for (Blog b : blogs) {
+                if (b.getId() != null && b.getCreateTime() != null) {
+                    long score = b.getCreateTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                    heap.offer(new FeedEntry(b.getId(), score));
+                }
+            }
+        }
+    }
+
+    /**
+     * 把 ZSet 元组放入大顶堆。
+     */
+    private void enqueue(PriorityQueue<FeedEntry> heap, Set<ZSetOperations.TypedTuple<String>> tuples) {
+        if (tuples == null || tuples.isEmpty()) {
+            return;
+        }
+        for (ZSetOperations.TypedTuple<String> tuple : tuples) {
+            String value = tuple.getValue();
+            Double score = tuple.getScore();
+            if (value == null || score == null) {
+                continue;
+            }
+            heap.offer(new FeedEntry(Long.valueOf(value), score.longValue()));
+        }
+    }
+
+    /**
+     * 用 Pipeline 批量拉取多个大V的发件箱，把 N 次网络往返压缩为 1 次。
+     *
+     * @param famousIds  大V 用户 ID 列表
+     * @param startTime  时间上界
+     * @param startOffset 同一时间戳的偏移量
+     * @param pageSize   每路取多少条
+     * @return 各路查询结果，元素为 {@code Set<TypedTuple<String>>}
+     */
+    @SuppressWarnings("unchecked")
+    private List<Object> pullFamousOutbox(List<Long> famousIds, long startTime, long fetchLimit) {
+        List<Object> results = stringRedisTemplate.executePipelined(new SessionCallback<Object>() {
+            @Override
+            public <K, V> Object execute(RedisOperations<K, V> operations) throws DataAccessException {
+                RedisOperations<String, String> ops = (RedisOperations<String, String>) operations;
+                for (Long famousId : famousIds) {
+                    ops.opsForZSet().reverseRangeByScoreWithScores(
+                            BLOG_OUTBOX_KEY + famousId, 0, startTime, 0, fetchLimit);
+                }
+                // Pipeline 必须返回 null，结果由框架按命令顺序回填
+                return null;
+            }
+        });
+        return results == null ? Collections.emptyList() : results;
+    }
+
+    /**
+     * 触发收件箱异步重建（走 MQ，避免刷流请求被重建拖慢）。
+     *
+     * <p>收件箱为空时每次刷流都会走到这里，用 SETNX 标记做防抖：
+     * 只有拿到标记的请求才投递消息，避免同一用户并发/连续刷流把 MQ 打满。
+     *
+     * @param userId 用户 ID
+     */
+    private void triggerRebuild(Long userId) {
+        String markKey = FEED_REBUILD_MARK_KEY + userId;
+        Boolean acquired;
+        try {
+            acquired = stringRedisTemplate.opsForValue().setIfAbsent(
+                    markKey, "1",
+                    FEED_REBUILD_TRIGGER_TTL_MINUTES, TimeUnit.MINUTES);
+        } catch (Exception e) {
+            log.error("写入 Feed 重建标记失败，userId={}", userId, e);
+            return;
+        }
+        if (!Boolean.TRUE.equals(acquired)) {
+            // 已有请求触发了重建，本次不再重复投递
+            return;
+        }
+        try {
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.FEED_REBUILD_EXCHANGE,
+                    RabbitMQConfig.FEED_REBUILD_ROUTING_KEY,
+                    userId);
+        } catch (Exception e) {
+            // 投递失败时释放标记，下次请求还能重新触发
+            stringRedisTemplate.delete(markKey);
+            log.error("触发 Feed 重建失败，userId={}", userId, e);
+        }
+    }
+
+    /**
+     * 归并用的最小单元：一篇笔记及其时间戳分数。
+     */
+    private static final class FeedEntry {
+        private final Long blogId;
+        private final long score;
+
+        private FeedEntry(Long blogId, long score) {
+            this.blogId = blogId;
+            this.score = score;
+        }
+    }
+
+    /**
+     * 构造空的分页结果，保证 /blog/of/follow 始终返回 {list,minTime,offset} 结构。
+     *
+     * <p>offset 沿用请求值而不是重置为 0：否则客户端带着新游标再请求一次，
+     * 会重新拿到已经返回过的同一批数据。
+     *
+     * @param max    当前请求的时间戳游标
+     * @param offset 当前请求的同时间戳偏移量
+     */
+    private ScrollResult emptyScrollResult(Long max, int offset) {
         ScrollResult r = new ScrollResult();
         r.setList(Collections.emptyList());
         r.setMinTime(max == null ? 0L : max);
-        r.setOffset(0);
+        r.setOffset(offset);
         return r;
     }
 
-    public void rebuildFeed(Long userId){
+    @Override
+    public void rebuildFeed(Long userId) {
+        try {
+            doRebuildFeed(userId);
+        } finally {
+            // 无论是否有数据可重建都续期标记：「没有关注 / 只关注大V / 近期无笔记」的用户
+            // 收件箱永远不会被创建，不续期就会导致每次刷流都重新投递重建消息。
+            try {
+                stringRedisTemplate.opsForValue().set(
+                        FEED_REBUILD_MARK_KEY + userId, "1",
+                        FEED_REBUILD_MARK_TTL_MINUTES, TimeUnit.MINUTES);
+            } catch (Exception e) {
+                log.warn("续期 Feed 重建标记失败，userId={}", userId, e);
+            }
+        }
+    }
+
+    /**
+     * 重建收件箱的实际逻辑。
+     *
+     * @param userId 用户 ID
+     */
+    private void doRebuildFeed(Long userId) {
         // 1. 获取当前用户关注的所有博主 ID
         List<Follow> follows = followService.query().eq("user_id", userId).list();
         if (follows == null || follows.isEmpty()) return;
 
-        List<Long> followUserIds = follows.stream()
-                .map(Follow::getFollowUserId)
+        // 2. 推拉结合：排除大V，只重建小博主动态（批量查 UserInfo 避免 N+1）
+        List<Long> allFollowIds = follows.stream().map(Follow::getFollowUserId).toList();
+        List<Long> famousIds = followService.queryFamousFollows(userId);
+        Set<Long> famousSet = famousIds == null ? Collections.emptySet() : new HashSet<>(famousIds);
+        List<Long> smallBloggerIds = allFollowIds.stream()
+                .filter(id -> !famousSet.contains(id))
                 .collect(Collectors.toList());
+        if (smallBloggerIds.isEmpty()) return;
 
-        // 2. 从数据库查询这些博主最近 7 天发布的笔记 ID (限制条数，如 100 条)
-        // SQL 示例: SELECT id, update_time FROM tb_blog WHERE user_id IN (...)
-        // AND update_time > (now - 7days) ORDER BY update_time DESC LIMIT 100
-        List<Blog> recentBlogs = query().in("user_id", followUserIds)
+        // 3. 从数据库查询这些博主最近 7 天发布的笔记（最多 100 条）
+        List<Blog> recentBlogs = query().in("user_id", smallBloggerIds)
                 .gt("create_time", LocalDateTime.now().minusDays(7))
                 .orderByDesc("create_time")
                 .last("LIMIT 100")
                 .list();
-
         if (recentBlogs == null || recentBlogs.isEmpty()) return;
 
-        // 3. 将这些博客 ID 重新写入 Redis ZSet
+        // 4. 批量写入收件箱 ZSet，裁剪到上限并续期 7 天
         String key = FEED_KEY + userId;
+        List<String> args = new ArrayList<>();
+        args.add(String.valueOf(FEED_MAX_LEN));
+        args.add(String.valueOf(TimeUnit.DAYS.toSeconds(FEED_INBOX_TTL_DAYS)));
         for (Blog blog : recentBlogs) {
-            long timestamp = blog.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
-            stringRedisTemplate.opsForZSet().add(key, blog.getId().toString(), timestamp);
+            long timestamp = blog.getCreateTime().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+            args.add(blog.getId().toString());
+            args.add(String.valueOf(timestamp));
         }
-
-        // 4. 设置过期时间（再次激活 7 天有效期）
-        stringRedisTemplate.expire(key, 7, TimeUnit.DAYS);
+        try {
+            stringRedisTemplate.execute(FEED_BULK_SCRIPT, Collections.singletonList(key), args.toArray());
+        } catch (Exception e) {
+            log.error("重建 Feed 收件箱失败，userId={}", userId, e);
+        }
     }
 
 

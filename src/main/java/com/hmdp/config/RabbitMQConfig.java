@@ -196,33 +196,6 @@ public class RabbitMQConfig {
     }
 
     /**
-     * 15分钟超时延迟队列。
-     *
-     * <p>下单成功后消息先放入此队列，15分钟内无人消费。
-     * TTL 到期后，RabbitMQ 自动将其作为死信投递到 {@link #SECKILL_DLX} 死信交换机，
-     * 进入 {@link #SECKILL_DLQ} 队列执行超时关单与库存/资格回滚。
-     *
-     * @return 延迟队列
-     */
-    @Bean
-    public Queue seckillTimeoutDelayQueue() {
-        return QueueBuilder.durable(SECKILL_TIMEOUT_DELAY_QUEUE)
-                .withArgument("x-message-ttl", (int) SECKILL_ORDER_TTL_MILLIS)
-                .deadLetterExchange(SECKILL_DLX)
-                .deadLetterRoutingKey(SECKILL_DLQ_ROUTING_KEY)
-                .build();
-    }
-
-    /**
-     * 把超时延迟队列绑定到业务主交换机。
-     */
-    @Bean
-    public Binding seckillTimeoutDelayBinding(@Qualifier("seckillTimeoutDelayQueue") Queue seckillTimeoutDelayQueue,
-                                             @Qualifier("seckillExchange") DirectExchange seckillExchange) {
-        return BindingBuilder.bind(seckillTimeoutDelayQueue).to(seckillExchange).with(SECKILL_TIMEOUT_DELAY_ROUTING_KEY);
-    }
-
-    /**
      * JSON 消息序列化器，使 {@code convertAndSend} 可以直接发送 Java 对象。
      *
      * @return Jackson 实现的消息转换器
@@ -232,6 +205,60 @@ public class RabbitMQConfig {
         return new Jackson2JsonMessageConverter();
     }
 
+    /* ==================== 博客 Feed 推送与重建 ==================== */
+    /** 博客 Feed 推送交换机（direct） */
+    public static final String BLOG_FEED_EXCHANGE = "blog.feed.direct";
+    /** 博客 Feed 异步写扩散推送队列（v2：带延迟重试与死信） */
+    public static final String BLOG_FEED_PUSH_QUEUE = "blog.feed.push.v2.queue";
+    /** 博客 Feed 推送路由键 */
+    public static final String BLOG_FEED_PUSH_ROUTING_KEY = "blog.feed.push";
+
+    /** Feed 推送死信交换机 */
+    public static final String BLOG_FEED_DLX = "blog.feed.dlx";
+    /** Feed 推送死信队列：写扩散最终失败的消息留档，供人工补推 */
+    public static final String BLOG_FEED_DLQ = "blog.feed.v2.dlq";
+    /** Feed 推送死信路由键 */
+    public static final String BLOG_FEED_DLQ_ROUTING_KEY = "blog.feed.dlq";
+
+    /** Feed 推送重试交换机 */
+    public static final String BLOG_FEED_RETRY_EXCHANGE = "blog.feed.retry.direct";
+    /** Feed 推送重试队列：TTL 到期后作为死信回投业务队列 */
+    public static final String BLOG_FEED_RETRY_QUEUE = "blog.feed.push.retry.v2.queue";
+    /** Feed 推送重试路由键 */
+    public static final String BLOG_FEED_RETRY_ROUTING_KEY = "blog.feed.push.retry";
+    /** 写扩散重试间隔（毫秒），写扩散本身耗时长，间隔比秒杀稍大 */
+    public static final long BLOG_FEED_RETRY_DELAY_MILLIS = 10_000L;
+
+    /** Feed 链路重试计数消息头（写扩散与重建共用） */
+    public static final String FEED_HEADER_RETRY_COUNT = "x-feed-retry-count";
+    /** Feed 链路最大重试次数，超限后转入死信队列 */
+    public static final int FEED_MAX_RETRY = 3;
+
+    /** Feed 重建交换机（topic） */
+    public static final String FEED_REBUILD_EXCHANGE = "feed.topic";
+    /** Feed 重建路由键 */
+    public static final String FEED_REBUILD_ROUTING_KEY = "feed.rebuild";
+    /** Feed 重建队列（v2：带死信） */
+    public static final String FEED_REBUILD_QUEUE = "feed.rebuild.v2.queue";
+    /** Feed 重建死信交换机 */
+    public static final String FEED_REBUILD_DLX = "feed.rebuild.dlx";
+    /** Feed 重建死信队列 */
+    public static final String FEED_REBUILD_DLQ = "feed.rebuild.v2.dlq";
+    /** Feed 重建死信路由键 */
+    public static final String FEED_REBUILD_DLQ_ROUTING_KEY = "feed.rebuild.dlq";
+
+    /** Feed 重建重试交换机 */
+    public static final String FEED_REBUILD_RETRY_EXCHANGE = "feed.rebuild.retry.direct";
+    /** Feed 重建重试队列：TTL 到期后作为死信回投 {@link #FEED_REBUILD_EXCHANGE} */
+    public static final String FEED_REBUILD_RETRY_QUEUE = "feed.rebuild.retry.v2.queue";
+    /** Feed 重建重试路由键 */
+    public static final String FEED_REBUILD_RETRY_ROUTING_KEY = "feed.rebuild.retry";
+
+    /** 大V晋升迁移队列 */
+    public static final String FEED_UPGRADE_QUEUE = "feed.upgrade.queue";
+    /** 大V晋升路由键 */
+    public static final String FEED_UPGRADE_ROUTING_KEY = "feed.upgrade";
+
     /**
      * 博客 Feed 重建交换机。
      *
@@ -239,19 +266,135 @@ public class RabbitMQConfig {
      */
     @Bean
     public TopicExchange feedExchange() {
-        return new TopicExchange("feed.topic");
+        return new TopicExchange(FEED_REBUILD_EXCHANGE);
+    }
+
+    /**
+     * 博客 Feed 推送交换机。
+     *
+     * @return direct 类型交换机
+     */
+    @Bean
+    public DirectExchange blogFeedExchange() {
+        return new DirectExchange(BLOG_FEED_EXCHANGE);
+    }
+
+    /**
+     * 博客 Feed 异步写扩散推送队列。
+     *
+     * <p>挂载死信路由：消费 NACK 且重试超限或队列内消息过期时，
+     * 转入 {@link #BLOG_FEED_DLQ} 留档，不会静默丢失。
+     *
+     * @return 持久化队列
+     */
+    @Bean
+    public Queue blogFeedPushQueue() {
+        return QueueBuilder.durable(BLOG_FEED_PUSH_QUEUE)
+                .deadLetterExchange(BLOG_FEED_DLX)
+                .deadLetterRoutingKey(BLOG_FEED_DLQ_ROUTING_KEY)
+                .build();
+    }
+
+    /**
+     * 绑定博客 Feed 推送队列与交换机。
+     *
+     * @param blogFeedPushQueue 推送队列
+     * @param blogFeedExchange  推送交换机
+     * @return 绑定关系
+     */
+    @Bean
+    public Binding blogFeedPushBinding(@Qualifier("blogFeedPushQueue") Queue blogFeedPushQueue,
+                                       @Qualifier("blogFeedExchange") DirectExchange blogFeedExchange) {
+        return BindingBuilder.bind(blogFeedPushQueue).to(blogFeedExchange).with(BLOG_FEED_PUSH_ROUTING_KEY);
+    }
+
+    /**
+     * Feed 推送死信交换机。
+     *
+     * @return direct 类型交换机
+     */
+    @Bean
+    public DirectExchange blogFeedDlx() {
+        return new DirectExchange(BLOG_FEED_DLX);
+    }
+
+    /**
+     * Feed 推送死信队列。
+     *
+     * @return 持久化队列
+     */
+    @Bean
+    public Queue blogFeedDlq() {
+        return QueueBuilder.durable(BLOG_FEED_DLQ).build();
+    }
+
+    /**
+     * 绑定 Feed 推送死信队列。
+     *
+     * @param blogFeedDlq 死信队列
+     * @param blogFeedDlx 死信交换机
+     * @return 绑定关系
+     */
+    @Bean
+    public Binding blogFeedDlqBinding(@Qualifier("blogFeedDlq") Queue blogFeedDlq,
+                                      @Qualifier("blogFeedDlx") DirectExchange blogFeedDlx) {
+        return BindingBuilder.bind(blogFeedDlq).to(blogFeedDlx).with(BLOG_FEED_DLQ_ROUTING_KEY);
+    }
+
+    /**
+     * Feed 推送重试交换机。
+     *
+     * @return direct 类型交换机
+     */
+    @Bean
+    public DirectExchange blogFeedRetryExchange() {
+        return new DirectExchange(BLOG_FEED_RETRY_EXCHANGE);
+    }
+
+    /**
+     * Feed 推送重试队列。
+     *
+     * <p>消息在此等待 {@link #BLOG_FEED_RETRY_DELAY_MILLIS} 毫秒后，
+     * 作为死信回流到业务交换机，避免 {@code basicNack(requeue=true)} 立刻空转重投。
+     *
+     * @return 持久化队列，带 TTL 与回投死信路由
+     */
+    @Bean
+    public Queue blogFeedRetryQueue() {
+        return QueueBuilder.durable(BLOG_FEED_RETRY_QUEUE)
+                .withArgument("x-message-ttl", (int) BLOG_FEED_RETRY_DELAY_MILLIS)
+                .deadLetterExchange(BLOG_FEED_EXCHANGE)
+                .deadLetterRoutingKey(BLOG_FEED_PUSH_ROUTING_KEY)
+                .build();
+    }
+
+    /**
+     * 绑定 Feed 推送重试队列。
+     *
+     * @param blogFeedRetryQueue    重试队列
+     * @param blogFeedRetryExchange 重试交换机
+     * @return 绑定关系
+     */
+    @Bean
+    public Binding blogFeedRetryBinding(@Qualifier("blogFeedRetryQueue") Queue blogFeedRetryQueue,
+                                        @Qualifier("blogFeedRetryExchange") DirectExchange blogFeedRetryExchange) {
+        return BindingBuilder.bind(blogFeedRetryQueue).to(blogFeedRetryExchange).with(BLOG_FEED_RETRY_ROUTING_KEY);
     }
 
     /**
      * 博客 Feed 重建队列。
      *
-     * <p>当前未设置 TTL 与长度限制，极端情况下可能堆积，建议后续加上上限。
+     * <p>重建由「收件箱不存在」触发，属幂等操作；失败时先进延迟重试，
+     * 重试超限后转死信，不影响刷流主链路。
      *
-     * @return 重建队列
+     * @return 持久化队列，带死信路由
      */
     @Bean
     public Queue feedRebuildQueue() {
-        return new Queue("feed.rebuild.queue");
+        return QueueBuilder.durable(FEED_REBUILD_QUEUE)
+                .deadLetterExchange(FEED_REBUILD_DLX)
+                .deadLetterRoutingKey(FEED_REBUILD_DLQ_ROUTING_KEY)
+                .build();
     }
 
     /**
@@ -265,5 +408,102 @@ public class RabbitMQConfig {
     public Binding feedBinding(@Qualifier("feedRebuildQueue") Queue feedRebuildQueue,
                                @Qualifier("feedExchange") TopicExchange feedExchange) {
         return BindingBuilder.bind(feedRebuildQueue).to(feedExchange).with("feed.rebuild.#");
+    }
+
+    /**
+     * Feed 重建死信交换机。
+     *
+     * @return direct 类型交换机
+     */
+    @Bean
+    public DirectExchange feedRebuildDlx() {
+        return new DirectExchange(FEED_REBUILD_DLX);
+    }
+
+    /**
+     * Feed 重建死信队列。
+     *
+     * @return 持久化队列
+     */
+    @Bean
+    public Queue feedRebuildDlq() {
+        return QueueBuilder.durable(FEED_REBUILD_DLQ).build();
+    }
+
+    /**
+     * 绑定 Feed 重建死信队列。
+     *
+     * @param feedRebuildDlq 死信队列
+     * @param feedRebuildDlx 死信交换机
+     * @return 绑定关系
+     */
+    @Bean
+    public Binding feedRebuildDlqBinding(@Qualifier("feedRebuildDlq") Queue feedRebuildDlq,
+                                         @Qualifier("feedRebuildDlx") DirectExchange feedRebuildDlx) {
+        return BindingBuilder.bind(feedRebuildDlq).to(feedRebuildDlx).with(FEED_REBUILD_DLQ_ROUTING_KEY);
+    }
+
+    /**
+     * Feed 重建重试交换机。
+     *
+     * @return direct 类型交换机
+     */
+    @Bean
+    public DirectExchange feedRebuildRetryExchange() {
+        return new DirectExchange(FEED_REBUILD_RETRY_EXCHANGE);
+    }
+
+    /**
+     * Feed 重建重试队列。
+     *
+     * <p>与写扩散重试一致：消息在此等待 {@link #BLOG_FEED_RETRY_DELAY_MILLIS} 毫秒，
+     * 过期后作为死信回投 {@link #FEED_REBUILD_EXCHANGE}，实现延迟重试。
+     *
+     * @return 持久化队列，带 TTL 与回投死信路由
+     */
+    @Bean
+    public Queue feedRebuildRetryQueue() {
+        return QueueBuilder.durable(FEED_REBUILD_RETRY_QUEUE)
+                .withArgument("x-message-ttl", (int) BLOG_FEED_RETRY_DELAY_MILLIS)
+                .deadLetterExchange(FEED_REBUILD_EXCHANGE)
+                .deadLetterRoutingKey(FEED_REBUILD_ROUTING_KEY)
+                .build();
+    }
+
+    /**
+     * 绑定 Feed 重建重试队列。
+     *
+     * @param feedRebuildRetryQueue    重建重试队列
+     * @param feedRebuildRetryExchange 重建重试交换机
+     * @return 绑定关系
+     */
+    @Bean
+    public Binding feedRebuildRetryBinding(@Qualifier("feedRebuildRetryQueue") Queue feedRebuildRetryQueue,
+                                           @Qualifier("feedRebuildRetryExchange") DirectExchange feedRebuildRetryExchange) {
+        return BindingBuilder.bind(feedRebuildRetryQueue).to(feedRebuildRetryExchange)
+                .with(FEED_REBUILD_RETRY_ROUTING_KEY);
+    }
+
+    /**
+     * 大V晋升迁移队列。
+     *
+     * @return 迁移队列
+     */
+    @Bean
+    public Queue feedUpgradeQueue() {
+        return QueueBuilder.durable(FEED_UPGRADE_QUEUE).build();
+    }
+
+    /**
+     * 绑定大V晋升迁移队列到 feed.topic 交换机。
+     *
+     * @param feedUpgradeQueue 晋升迁移队列
+     * @param feedExchange     feed.topic 交换机
+     * @return 绑定关系
+     */
+    @Bean
+    public Binding feedUpgradeBinding(@Qualifier("feedUpgradeQueue") Queue feedUpgradeQueue,
+                                      @Qualifier("feedExchange") TopicExchange feedExchange) {
+        return BindingBuilder.bind(feedUpgradeQueue).to(feedExchange).with(FEED_UPGRADE_ROUTING_KEY);
     }
 }

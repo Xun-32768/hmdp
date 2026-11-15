@@ -8,6 +8,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.crypto.digest.DigestUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.config.RabbitMQConfig;
 import com.hmdp.mapper.UserMapper;
 import com.hmdp.pojo.dto.LoginFormDTO;
 import com.hmdp.pojo.dto.PasswordDTO;
@@ -290,7 +291,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         Boolean hasKey = stringRedisTemplate.hasKey(key);
         if (Boolean.FALSE.equals(hasKey)) {
             // 2. 发送消息到RabbitMQ队列进行重建
-            rabbitTemplate.convertAndSend("feed.topic", "feed.rebuild", userId);
+            rabbitTemplate.convertAndSend(
+                    RabbitMQConfig.FEED_REBUILD_EXCHANGE,
+                    RabbitMQConfig.FEED_REBUILD_ROUTING_KEY,
+                    userId);
         }
     }
 

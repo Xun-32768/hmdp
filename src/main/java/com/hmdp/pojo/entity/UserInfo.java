@@ -79,6 +79,11 @@ public class UserInfo implements Serializable {
     private Byte level;
 
     /**
+     * 博主角色类型：0-普通博主/小V（写扩散），1-大V博主（发件箱读扩散）
+     */
+    private Byte roleType;
+
+    /**
      * 创建时间
      */
     private LocalDateTime createTime;
