@@ -6,6 +6,7 @@ server:
       min-spare: 50    # 最小空闲线程数
     accept-count: 2000 # 允许在队列中排队的最大连接数（关键！防止连接直接被拒）
     max-connections: 5000 # 最大允许建立的 TCP 连接数
+    max-swallow-size: -1 # 允许吞噬所有剩余请求体，避免大文件超限时重置 TCP 连接导致前端 Network Error
 
 
 mybatis-plus:

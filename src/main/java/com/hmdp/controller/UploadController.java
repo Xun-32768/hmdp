@@ -25,6 +25,11 @@ public class UploadController {
 
     private static final String pathName = "D:\\nginx\\nginx-1.18.0\\html\\hmdp\\imgs\\";
 
+    /** 头像图片最大限制：2MB */
+    public static final long MAX_AVATAR_IMAGE_SIZE = 2 * 1024 * 1024L;
+    /** 博客图片最大限制：5MB */
+    public static final long MAX_BLOG_IMAGE_SIZE = 5 * 1024 * 1024L;
+
     /**
      * 用户头像独立上传接口
      * 存放在 MinIO 的 avatars/ 目录，区分普通博客图片
@@ -35,8 +40,8 @@ public class UploadController {
             return Result.fail("上传头像图片不能为空");
         }
         // 头像文件大小限制在 2MB 以内
-        if (image.getSize() > 2 * 1024 * 1024) {
-            return Result.fail("上传头像图片大小不能超过 2MB");
+        if (image.getSize() > MAX_AVATAR_IMAGE_SIZE) {
+            return Result.fail("上传头像图片大小超过空间限制，不能超过 2MB");
         }
         try {
             String originalFilename = image.getOriginalFilename();
@@ -55,6 +60,10 @@ public class UploadController {
             return Result.ok(fileUrl);
         } catch (Exception e) {
             log.error("头像上传失败", e);
+            String errorMsg = e.getMessage() == null ? "" : e.getMessage();
+            if (StrUtil.containsAnyIgnoreCase(errorMsg, "space", "quota", "full", "exceeded", "limit", "容量", "空间")) {
+                return Result.fail("存储空间不足或超出配额限制，上传头像失败");
+            }
             return Result.fail("头像上传失败：" + e.getMessage());
         }
     }
@@ -63,6 +72,10 @@ public class UploadController {
     public Result uploadBlog(@RequestParam("file") MultipartFile image) {
         if (image == null || image.isEmpty()) {
             return Result.fail("上传图片不能为空");
+        }
+        // 限制博客图片单张大小不能超过 5MB
+        if (image.getSize() > MAX_BLOG_IMAGE_SIZE) {
+            return Result.fail("上传图片大小超过空间限制，单张图片不能超过 5MB");
         }
         try {
             String originalFilename = image.getOriginalFilename();
@@ -81,6 +94,10 @@ public class UploadController {
             return Result.ok(fileUrl);
         } catch (Exception e) {
             log.error("文件上传失败", e);
+            String errorMsg = e.getMessage() == null ? "" : e.getMessage();
+            if (StrUtil.containsAnyIgnoreCase(errorMsg, "space", "quota", "full", "exceeded", "limit", "容量", "空间")) {
+                return Result.fail("存储空间不足或超出配额限制，上传失败");
+            }
             return Result.fail("文件上传失败：" + e.getMessage());
         }
     }

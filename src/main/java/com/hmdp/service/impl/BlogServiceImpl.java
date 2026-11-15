@@ -134,6 +134,16 @@ public class BlogServiceImpl extends ServiceImpl<BlogMapper, Blog> implements IB
         if (blog.getContent() == null || blog.getShopId() == null || blog.getTitle() == null) {
             return Result.fail("笔记不完整，发布失败");
         }
+        // 校验博客图片数量及存储长度限制（最多9张，单条不超过2048字符）
+        if (StrUtil.isNotBlank(blog.getImages())) {
+            String[] imgs = blog.getImages().split(",");
+            if (imgs.length > 9) {
+                return Result.fail("发布笔记图片数量超过限制，最多只能上传9张图片");
+            }
+            if (blog.getImages().length() > 2000) {
+                return Result.fail("发布笔记图片存储超出长度限制");
+            }
+        }
         //            保存博客到数据库
         if (!save(blog)) {
             return Result.fail("发布失败");
