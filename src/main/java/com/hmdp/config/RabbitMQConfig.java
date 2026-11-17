@@ -506,4 +506,43 @@ public class RabbitMQConfig {
                                       @Qualifier("feedExchange") TopicExchange feedExchange) {
         return BindingBuilder.bind(feedUpgradeQueue).to(feedExchange).with(FEED_UPGRADE_ROUTING_KEY);
     }
+
+    /* ==================== 商户 ES 数据同步 ==================== */
+    /** 商户数据变更交换机（topic） */
+    public static final String SHOP_EXCHANGE = "shop.topic";
+    /** 商户新增/修改队列 */
+    public static final String SHOP_INSERT_QUEUE = "shop.insert.queue";
+    /** 商户删除队列 */
+    public static final String SHOP_DELETE_QUEUE = "shop.delete.queue";
+    /** 商户新增/修改路由键 */
+    public static final String SHOP_INSERT_KEY = "shop.insert";
+    /** 商户删除路由键 */
+    public static final String SHOP_DELETE_KEY = "shop.delete";
+
+    @Bean
+    public TopicExchange shopTopicExchange() {
+        return new TopicExchange(SHOP_EXCHANGE);
+    }
+
+    @Bean
+    public Queue shopInsertQueue() {
+        return QueueBuilder.durable(SHOP_INSERT_QUEUE).build();
+    }
+
+    @Bean
+    public Queue shopDeleteQueue() {
+        return QueueBuilder.durable(SHOP_DELETE_QUEUE).build();
+    }
+
+    @Bean
+    public Binding shopInsertBinding(@Qualifier("shopInsertQueue") Queue shopInsertQueue,
+                                     @Qualifier("shopTopicExchange") TopicExchange shopTopicExchange) {
+        return BindingBuilder.bind(shopInsertQueue).to(shopTopicExchange).with(SHOP_INSERT_KEY);
+    }
+
+    @Bean
+    public Binding shopDeleteBinding(@Qualifier("shopDeleteQueue") Queue shopDeleteQueue,
+                                     @Qualifier("shopTopicExchange") TopicExchange shopTopicExchange) {
+        return BindingBuilder.bind(shopDeleteQueue).to(shopTopicExchange).with(SHOP_DELETE_KEY);
+    }
 }

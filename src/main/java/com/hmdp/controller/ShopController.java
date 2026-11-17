@@ -3,6 +3,7 @@ package com.hmdp.controller;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.hmdp.pojo.dto.Result;
+import com.hmdp.pojo.dto.ShopSearchDTO;
 import com.hmdp.pojo.entity.Shop;
 import com.hmdp.service.IShopService;
 import com.hmdp.utils.SystemConstants;
@@ -24,6 +25,28 @@ public class ShopController {
 
     @Resource
     private IShopService shopService;
+
+    /**
+     * 商户多维度搜索与复合筛选（Elasticsearch 驱动）
+     * 支持关键字搜索、分类过滤、商圈过滤、价格区间、评分筛选、距离过滤、多字段排序
+     * @param params 复合筛选参数
+     * @return 命中的商户列表及分页信息
+     */
+    @GetMapping("/search")
+    public Result searchShops(ShopSearchDTO params) {
+        return shopService.searchShops(params);
+    }
+
+    /**
+     * 商铺搜索关键字自动补全建议词
+     * @param key 前缀关键字
+     * @return 建议词列表
+     */
+    @GetMapping("/suggestion")
+    public Result getShopSuggestions(@RequestParam("key") String key) {
+        return shopService.getShopSuggestions(key);
+    }
+
     /**
      * 根据商铺名称关键字分页查询商铺信息
      * @param name 商铺名称关键字
@@ -59,9 +82,7 @@ public class ShopController {
      */
     @PutMapping
     public Result updateShop(@RequestBody Shop shop) {
-        // 写入数据库
-        shopService.updateById(shop);
-        return Result.ok();
+        return shopService.updateShop(shop);
     }
     /**
      * 根据商铺类型分页查询商铺信息

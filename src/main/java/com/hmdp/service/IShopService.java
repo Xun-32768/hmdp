@@ -1,8 +1,9 @@
 package com.hmdp.service;
 
-import com.hmdp.pojo.dto.Result;
-import com.hmdp.pojo.entity.Shop;
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.hmdp.pojo.dto.Result;
+import com.hmdp.pojo.dto.ShopSearchDTO;
+import com.hmdp.pojo.entity.Shop;
 
 /**
  * <p>
@@ -19,4 +20,10 @@ public interface IShopService extends IService<Shop> {
     Result queryShopByType(Integer typeId, Integer current, Double x, Double y);
 
     Result saveShop(Shop shop);
+
+    Result updateShop(Shop shop);
+
+    Result searchShops(ShopSearchDTO params);
+
+    Result getShopSuggestions(String prefix);
 }
